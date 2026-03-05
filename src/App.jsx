@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect } from "react";
-import { ITEMS, CATEGORIES, SUPPLIERS, REQUISITIONS, INVOICES, POS, ACTIVITY, EXTRACTED_ITEMS, WITHDRAWALS } from "./data.js";
+import { INVOICES, POS, ACTIVITY, EXTRACTED_ITEMS } from "./data.js";
+import { useSupabaseData } from "./useSupabaseData.js";
 
 // ─── STYLES & PRIMITIVES ───
 const C = { bg:"#F7F5F2",card:"#FFF",sb:"#1C1917",sbH:"#292524",sbA:"#44403C",ac:"#B45309",acL:"#FEF3C7",tx:"#1C1917",txM:"#78716C",txL:"#A8A29E",txW:"#F5F5F4",bd:"#E7E5E4",ok:"#15803D",okBg:"#DCFCE7",warn:"#A16207",warnBg:"#FEF9C3",err:"#DC2626",errBg:"#FEE2E2",info:"#1D4ED8",infoBg:"#DBEAFE",pur:"#7C3AED",purBg:"#EDE9FE" };
@@ -16,6 +17,7 @@ const Inp=({...p})=><input {...p} style={{width:"100%",padding:"9px 12px",border
 const Sel=({children,...p})=><select {...p} style={{width:"100%",padding:"9px 12px",borderRadius:8,border:`1px solid ${C.bd}`,fontSize:14,fontFamily:"inherit",boxSizing:"border-box",...p.style}}>{children}</select>;
 const Search=({value,onChange,placeholder="Buscar..."})=><div style={{position:"relative",maxWidth:320,width:"100%"}}><div style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",color:C.txL}}>🔍</div><Inp value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} style={{paddingLeft:36}}/></div>;
 const Label=({children})=><label style={{display:"block",fontSize:12,fontWeight:600,color:C.txM,marginBottom:4}}>{children}</label>;
+const Loader=({error,onRetry})=>error?<div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:60,gap:16}}><div style={{fontSize:48}}>⚠️</div><div style={{fontSize:16,fontWeight:600,color:C.err}}>Error al cargar datos</div><div style={{fontSize:13,color:C.txM,textAlign:"center",maxWidth:400}}>{error}</div>{onRetry&&<Btn v="primary" onClick={onRetry}>Reintentar</Btn>}</div>:<div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:60,gap:16}}><div style={{width:40,height:40,border:`4px solid ${C.bd}`,borderTopColor:C.ac,borderRadius:"50%",animation:"spin 0.8s linear infinite"}}/><div style={{fontSize:14,color:C.txM}}>Cargando datos...</div><style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style></div>;
 const StatCard=({icon,label,value,sub,color=C.ac})=><Card style={{display:"flex",gap:16,alignItems:"center"}}><div style={{width:48,height:48,borderRadius:12,background:`${color}15`,display:"flex",alignItems:"center",justifyContent:"center",color,fontSize:22,flexShrink:0}}>{icon}</div><div><div style={{fontSize:13,color:C.txM,marginBottom:2}}>{label}</div><div style={{fontSize:24,fontWeight:700,lineHeight:1.1}}>{value}</div>{sub&&<div style={{fontSize:12,color:C.txM,marginTop:2}}>{sub}</div>}</div></Card>;
 
 const Tbl=({cols,data,onRow})=><div style={{overflowX:"auto",borderRadius:10,border:`1px solid ${C.bd}`,background:C.card}}><table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}><thead><tr style={{background:"#FAFAF9"}}>{cols.map(c=><th key={c.k} style={{padding:"10px 14px",textAlign:"left",fontWeight:600,color:C.txM,borderBottom:`1px solid ${C.bd}`,fontSize:12,textTransform:"uppercase",letterSpacing:.5,whiteSpace:"nowrap"}}>{c.l}</th>)}</tr></thead><tbody>{data.map((r,i)=><tr key={r.id||i} onClick={()=>onRow?.(r)} style={{cursor:onRow?"pointer":"default",borderBottom:i<data.length-1?`1px solid ${C.bd}`:"none"}} onMouseEnter={e=>{if(onRow)e.currentTarget.style.background="#FAFAF9"}} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>{cols.map(c=><td key={c.k} style={{padding:"11px 14px",whiteSpace:c.nw?"nowrap":"normal"}}>{c.r?c.r(r[c.k],r):r[c.k]}</td>)}</tr>)}</tbody></table></div>;
@@ -23,7 +25,7 @@ const Tbl=({cols,data,onRow})=><div style={{overflowX:"auto",borderRadius:10,bor
 const Modal=({open,onClose,title,w=520,children})=>{if(!open)return null;return <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.5)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000}} onClick={onClose}><div onClick={e=>e.stopPropagation()} style={{background:C.card,borderRadius:16,padding:28,width:w,maxWidth:"95vw",maxHeight:"85vh",overflow:"auto"}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}><h3 style={{margin:0,fontSize:18,fontWeight:700}}>{title}</h3><button onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",color:C.txM,fontSize:20}}>×</button></div>{children}</div></div>};
 
 // ─── ITEM SEARCH COMBO (hybrid catalog/free-text) ───
-const ItemCombo=({value,onChange})=>{
+const ItemCombo=({value,onChange,items:ITEMS=[]})=>{
   const[q,setQ]=useState(value?.name||"");
   const[open,setOpen]=useState(false);
   const ref=useRef(null);
@@ -56,7 +58,7 @@ const ItemCombo=({value,onChange})=>{
 };
 
 // ─── NEW REQUISITION ───
-const NewReqPage=({onBack})=>{
+const NewReqPage=({onBack,items:ITEMS=[],categories:CATEGORIES=[]})=>{
   const[form,setForm]=useState({title:"",project:"",priority:"medium",neededBy:"",notes:""});
   const[lines,setLines]=useState([{id:1,item:null,qty:"",unit:"pza",notes:""}]);
   const nid=useRef(2);
@@ -91,7 +93,7 @@ const NewReqPage=({onBack})=>{
             {lines.map((line,idx)=><div key={line.id} style={{display:"flex",gap:10,alignItems:"start",padding:14,borderRadius:10,border:`1px solid ${C.bd}`,background:line.item?.type==="free_text"&&line.item?.name?"#FFFDF5":"#FAFAF9"}}>
               <span style={{fontSize:12,fontWeight:700,color:C.txL,paddingTop:10,minWidth:20}}>{idx+1}</span>
               <div style={{flex:1,display:"flex",flexDirection:"column",gap:8}}>
-                <ItemCombo value={line.item} onChange={item=>{upLine(line.id,"item",item);if(item.unit)upLine(line.id,"unit",item.unit)}}/>
+                <ItemCombo value={line.item} onChange={item=>{upLine(line.id,"item",item);if(item.unit)upLine(line.id,"unit",item.unit)}} items={ITEMS}/>
                 <div style={{display:"flex",gap:8}}>
                   <Inp type="number" value={line.qty} onChange={e=>upLine(line.id,"qty",e.target.value)} placeholder="Cant." style={{width:90,textAlign:"center"}}/>
                   <Sel value={line.unit} onChange={e=>upLine(line.id,"unit",e.target.value)} style={{width:90}}>{["pza","hoja","litro","kg","m","caja","par","rollo","galón"].map(u=><option key={u}>{u}</option>)}</Sel>
@@ -123,7 +125,7 @@ const NewReqPage=({onBack})=>{
 };
 
 // ─── REQUISITION DETAIL (APPROVAL VIEW) ───
-const ReqDetailPage=({req,onBack})=>{
+const ReqDetailPage=({req,onBack,items:ITEMS=[],categories:CATEGORIES=[]})=>{
   const[items,setItems]=useState(req.items.map(i=>({...i,action:null,linked:null})));
   const[linkM,setLinkM]=useState(null);
   const[catM,setCatM]=useState(null);
@@ -243,17 +245,19 @@ const ReqDetailPage=({req,onBack})=>{
 };
 
 // ─── PAGE: DASHBOARD ───
-const Dashboard=({go})=>{
-  const low=ITEMS.filter(i=>i.currentStock<=i.minStock);
+const Dashboard=({go,items:ITEMS=[],categories:CATEGORIES=[],requisitions:REQUISITIONS=[],withdrawals:WITHDRAWALS=[]})=>{
+  const low=ITEMS.filter(i=>i.currentStock<=i.minStock&&i.currentStock>0);
+  const zero=ITEMS.filter(i=>i.currentStock===0);
   const pend=REQUISITIONS.filter(r=>r.status==="pending_approval");
+  const activeW=WITHDRAWALS.filter(w=>["requested","ready","dispatched"].includes(w.status));
   const val=ITEMS.reduce((s,i)=>s+i.currentStock*i.unitCost,0);
   const kc=[{k:"pending_approval",l:"Pendiente",c:"#F59E0B"},{k:"approved",l:"Aprobada",c:"#3B82F6"},{k:"in_progress",l:"En proceso",c:"#8B5CF6"},{k:"completed",l:"Completada",c:"#22C55E"}];
   return <div>
     <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))",gap:16,marginBottom:24}}>
-      <StatCard icon="📦" label="Items Activos" value={ITEMS.length} sub={`${CATEGORIES.length} categorías`}/>
+      <StatCard icon="📦" label="Items en Catálogo" value={ITEMS.length} sub={`${zero.length} sin stock`}/>
       <StatCard icon="⚠️" label="Stock Bajo" value={low.length} sub="por debajo del mínimo" color={C.err}/>
       <StatCard icon="📋" label="Reqs. Pendientes" value={pend.length} sub="esperando aprobación" color={C.warn}/>
-      <StatCard icon="💰" label="Valor Inventario" value={fmt(val)} sub="costo total" color={C.ok}/>
+      <StatCard icon="💰" label="Valor Inventario" value={fmt(val)} sub={`${activeW.length} vales activos`} color={C.ok}/>
     </div>
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:20,marginBottom:24}}>
       <Card>
@@ -275,7 +279,7 @@ const Dashboard=({go})=>{
 };
 
 // ─── PAGE: INVENTORY ───
-const Inventory=()=>{
+const Inventory=({items:ITEMS=[],categories:CATEGORIES=[]})=>{
   const[s,setS]=useState("");const[cat,setCat]=useState("all");const[modal,setModal]=useState(false);const[pg,setPg]=useState(0);const PG=30;
   const cats=[...new Set(ITEMS.map(i=>i.category))];
   const f=ITEMS.filter(i=>{const ms=!s||i.name.toLowerCase().includes(s.toLowerCase())||i.sku.toLowerCase().includes(s.toLowerCase())||i.supplier.toLowerCase().includes(s.toLowerCase());return ms&&(cat==="all"||i.category===cat)});
@@ -319,10 +323,10 @@ const Invoices=()=>{const[sel,setSel]=useState(null);if(sel)return <InvReview in
 </div>};
 
 // ─── PAGE: REQUISITIONS (KANBAN) ───
-const Reqs=()=>{
+const Reqs=({items:ITEMS=[],categories:CATEGORIES=[],requisitions:REQUISITIONS=[]})=>{
   const[det,setDet]=useState(null);const[newR,setNewR]=useState(false);
-  if(newR)return <NewReqPage onBack={()=>setNewR(false)}/>;
-  if(det)return <ReqDetailPage req={det} onBack={()=>setDet(null)}/>;
+  if(newR)return <NewReqPage onBack={()=>setNewR(false)} items={ITEMS} categories={CATEGORIES}/>;
+  if(det)return <ReqDetailPage req={det} onBack={()=>setDet(null)} items={ITEMS} categories={CATEGORIES}/>;
   const cols=[{k:"pending_approval",l:"Pendiente Aprobación",c:"#F59E0B",bg:"#FFFBEB"},{k:"approved",l:"Aprobada",c:"#3B82F6",bg:"#EFF6FF"},{k:"in_progress",l:"En Proceso",c:"#8B5CF6",bg:"#F5F3FF"},{k:"completed",l:"Completada",c:"#22C55E",bg:"#F0FDF4"}];
   return <div>
     <div style={{display:"flex",justifyContent:"space-between",marginBottom:20}}><Search placeholder="Buscar requisición..." value="" onChange={()=>{}}/><Btn v="primary" onClick={()=>setNewR(true)}>+ Nueva Requisición</Btn></div>
@@ -347,7 +351,7 @@ const Reqs=()=>{
 };
 
 // ─── PAGE: SUPPLIERS ───
-const Suppl=()=>{const[s,setS]=useState("");const f=SUPPLIERS.filter(x=>!s||x.company.toLowerCase().includes(s.toLowerCase()));return <div>
+const Suppl=({items:ITEMS=[],suppliers:SUPPLIERS=[]})=>{const[s,setS]=useState("");const f=SUPPLIERS.filter(x=>!s||x.company.toLowerCase().includes(s.toLowerCase()));return <div>
   <div style={{display:"flex",justifyContent:"space-between",marginBottom:20}}><Search value={s} onChange={setS} placeholder="Buscar proveedor..."/><Btn v="primary">+ Nuevo Proveedor</Btn></div>
   <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(320px,1fr))",gap:16}}>
     {f.map(sup=>{const itemCount=ITEMS.filter(i=>i.supplier===sup.company).length;const cats=[...new Set(ITEMS.filter(i=>i.supplier===sup.company).map(i=>i.category))];return <Card key={sup.id} style={{transition:"all .15s",cursor:"pointer"}} onMouseEnter={e=>{e.currentTarget.style.boxShadow="0 4px 16px rgba(0,0,0,.08)";e.currentTarget.style.transform="translateY(-2px)"}} onMouseLeave={e=>{e.currentTarget.style.boxShadow="none";e.currentTarget.style.transform="none"}}>
@@ -423,13 +427,13 @@ const WithdrawalDetail=({w,onBack})=>{
   </div>
 };
 
-const Withdrawals=()=>{
+const Withdrawals=({withdrawals:WITHDRAWALS=[]})=>{
   const[det,setDet]=useState(null);
   if(det)return <WithdrawalDetail w={det} onBack={()=>setDet(null)}/>;
   const active=WITHDRAWALS.filter(w=>["requested","ready","dispatched"].includes(w.status));
   const history=WITHDRAWALS.filter(w=>!["requested","ready","dispatched"].includes(w.status));
   const pendC=WITHDRAWALS.filter(w=>w.status==="requested").length;
-  const todayC=WITHDRAWALS.filter(w=>!w.requestedAt.startsWith("Ayer")).length;
+  const todayC=WITHDRAWALS.filter(w=>w.requestedAt&&!w.requestedAt.startsWith("Ayer")).length;
   const selfC=WITHDRAWALS.filter(w=>w.status==="self_service").length;
   const totalD=history.reduce((s,w)=>s+w.items.reduce((a,i)=>(i.qtyDisp||0)*i.cost,0),0);
   return <div>
@@ -466,8 +470,8 @@ const Withdrawals=()=>{
 };
 
 // ─── PAGE: REPORTS ───
-const Reports=()=>{
-  const cv=useMemo(()=>{const m={};ITEMS.forEach(i=>{m[i.category]=(m[i.category]||0)+i.currentStock*i.unitCost});return Object.entries(m).sort((a,b)=>b[1]-a[1])},[]);
+const Reports=({items:ITEMS=[]})=>{
+  const cv=useMemo(()=>{const m={};ITEMS.forEach(i=>{m[i.category]=(m[i.category]||0)+i.currentStock*i.unitCost});return Object.entries(m).sort((a,b)=>b[1]-a[1])},[ITEMS]);
   const mx=Math.max(...cv.map(([,v])=>v));
   return <div>
     <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:16,marginBottom:24}}>
@@ -488,7 +492,9 @@ const TITLES={dashboard:"Dashboard",inventory:"Inventario",invoices:"Facturas",r
 export default function App(){
   const[page,setPage]=useState("dashboard");
   const[sb,setSb]=useState(true);
-  const render=()=>{switch(page){case"dashboard":return <Dashboard go={setPage}/>;case"inventory":return <Inventory/>;case"invoices":return <Invoices/>;case"requisitions":return <Reqs/>;case"withdrawals":return <Withdrawals/>;case"purchase-orders":return <POPage/>;case"suppliers":return <Suppl/>;case"reports":return <Reports/>;default:return <Dashboard go={setPage}/>}};
+  const{items,categories,suppliers,requisitions,withdrawals,loading,error,refetch}=useSupabaseData();
+  const d={items,categories,suppliers,requisitions,withdrawals};
+  const render=()=>{if(loading)return <Loader/>;if(error)return <Loader error={error} onRetry={refetch}/>;switch(page){case"dashboard":return <Dashboard go={setPage} {...d}/>;case"inventory":return <Inventory items={items} categories={categories}/>;case"invoices":return <Invoices/>;case"requisitions":return <Reqs items={items} categories={categories} requisitions={requisitions}/>;case"withdrawals":return <Withdrawals withdrawals={withdrawals}/>;case"purchase-orders":return <POPage/>;case"suppliers":return <Suppl items={items} suppliers={suppliers}/>;case"reports":return <Reports items={items}/>;default:return <Dashboard go={setPage} {...d}/>}};
   return <div style={{display:"flex",height:"100vh",fontFamily:"'DM Sans','Segoe UI',system-ui,sans-serif",background:C.bg,color:C.tx}}>
     <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');*{box-sizing:border-box;margin:0;padding:0}::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:#D6D3D1;border-radius:3px}@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}input:focus,select:focus,textarea:focus{outline:none;border-color:${C.ac}!important;box-shadow:0 0 0 3px ${C.ac}20}`}</style>
 
