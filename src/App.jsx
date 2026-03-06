@@ -167,8 +167,8 @@ const ReqDetailPage=({req,onBack,items:ITEMS=[],categories:CATEGORIES=[]})=>{
                   {item.action==="linked"&&<Badge v="info">↗ Vinculado → {item.linked}</Badge>}
                   {item.action==="free"&&<Badge v="accent">Texto libre</Badge>}
                 </div>
-                <div style={{display:"flex",gap:16,fontSize:13,color:C.txM}}>
-                  <span><strong>{item.qty}</strong> {item.unit}</span>
+                <div style={{display:"flex",gap:16,fontSize:13,color:C.txM,flexWrap:"wrap",alignItems:"center"}}>
+                  <span><strong>{item.qty}</strong> {item.unit}{item.qtyApproved!=null&&item.qtyApproved!==item.qtyRequested&&<span style={{fontSize:11,color:C.warn,marginLeft:6}}>(original: {item.qtyRequested})</span>}</span>
                   {item.estCost&&<span>~{fmt(item.estCost)} c/u</span>}
                   {item.estCost&&<span style={{fontWeight:600,color:C.tx}}>Subtotal: {fmt(item.estCost*item.qty)}</span>}
                   {!item.estCost&&<span style={{color:C.warn,fontStyle:"italic"}}>Costo por definir</span>}
