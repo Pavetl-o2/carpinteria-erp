@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useRef, useEffect } from "react";
 import { INVOICES, POS, ACTIVITY, EXTRACTED_ITEMS } from "./data.js";
 import { useSupabaseData } from "./useSupabaseData.js";
+import { BulkUploadModal, downloadTemplate } from "./BulkUpload.jsx";
 
 // ─── STYLES & PRIMITIVES ───
 const C = { bg:"#F7F5F2",card:"#FFF",sb:"#1C1917",sbH:"#292524",sbA:"#44403C",ac:"#B45309",acL:"#FEF3C7",tx:"#1C1917",txM:"#78716C",txL:"#A8A29E",txW:"#F5F5F4",bd:"#E7E5E4",ok:"#15803D",okBg:"#DCFCE7",warn:"#A16207",warnBg:"#FEF9C3",err:"#DC2626",errBg:"#FEE2E2",info:"#1D4ED8",infoBg:"#DBEAFE",pur:"#7C3AED",purBg:"#EDE9FE" };
@@ -279,8 +280,8 @@ const Dashboard=({go,items:ITEMS=[],categories:CATEGORIES=[],requisitions:REQUIS
 };
 
 // ─── PAGE: INVENTORY ───
-const Inventory=({items:ITEMS=[],categories:CATEGORIES=[]})=>{
-  const[s,setS]=useState("");const[cat,setCat]=useState("all");const[modal,setModal]=useState(false);const[pg,setPg]=useState(0);const PG=30;
+const Inventory=({items:ITEMS=[],categories:CATEGORIES=[],suppliers:SUPPLIERS=[],refetch})=>{
+  const[s,setS]=useState("");const[cat,setCat]=useState("all");const[modal,setModal]=useState(false);const[bulkModal,setBulkModal]=useState(false);const[pg,setPg]=useState(0);const PG=30;
   const cats=[...new Set(ITEMS.map(i=>i.category))];
   const f=ITEMS.filter(i=>{const ms=!s||i.name.toLowerCase().includes(s.toLowerCase())||i.sku.toLowerCase().includes(s.toLowerCase())||i.supplier.toLowerCase().includes(s.toLowerCase());return ms&&(cat==="all"||i.category===cat)});
   const totalPg=Math.ceil(f.length/PG);const paged=f.slice(pg*PG,(pg+1)*PG);
@@ -293,7 +294,7 @@ const Inventory=({items:ITEMS=[],categories:CATEGORIES=[]})=>{
       <StatCard icon="⚠️" label="Stock Bajo" value={lowStock} color={C.warn}/>
       <StatCard icon="🔴" label="Sin Stock" value={zeroStock} color={C.err}/>
     </div>
-    <div style={{display:"flex",justifyContent:"space-between",marginBottom:16}}><div style={{display:"flex",gap:12,flex:1}}><Search value={s} onChange={v=>{setS(v);setPg(0)}} placeholder="Buscar nombre, SKU o proveedor..."/><Sel value={cat} onChange={e=>{setCat(e.target.value);setPg(0)}} style={{width:200}}><option value="all">Todas las categorías</option>{cats.map(c=><option key={c} value={c}>{c} ({ITEMS.filter(i=>i.category===c).length})</option>)}</Sel></div><Btn v="primary" onClick={()=>setModal(true)}>+ Nuevo Item</Btn></div>
+    <div style={{display:"flex",justifyContent:"space-between",marginBottom:16}}><div style={{display:"flex",gap:12,flex:1}}><Search value={s} onChange={v=>{setS(v);setPg(0)}} placeholder="Buscar nombre, SKU o proveedor..."/><Sel value={cat} onChange={e=>{setCat(e.target.value);setPg(0)}} style={{width:200}}><option value="all">Todas las categorías</option>{cats.map(c=><option key={c} value={c}>{c} ({ITEMS.filter(i=>i.category===c).length})</option>)}</Sel></div><div style={{display:"flex",gap:8}}><Btn onClick={()=>setBulkModal(true)}>📤 Carga Masiva</Btn><Btn v="primary" onClick={()=>setModal(true)}>+ Nuevo Item</Btn></div></div>
     <div style={{fontSize:12,color:C.txM,marginBottom:8}}>{f.length} artículo{f.length!==1?"s":""} encontrado{f.length!==1?"s":""}</div>
     <Tbl cols={[{k:"sku",l:"SKU",nw:1,r:v=> <span style={{fontFamily:"monospace",fontSize:11,color:C.ac}}>{v}</span>},{k:"name",l:"Artículo",r:(v,r)=> <div><div style={{fontWeight:600,fontSize:13}}>{v}</div><div style={{fontSize:11,color:C.txL}}>{r.subcategory}</div></div>},{k:"category",l:"Categoría",r:v=> <Badge>{v}</Badge>},{k:"supplier",l:"Proveedor",r:v=> <span style={{fontSize:12}}>{v}</span>},{k:"currentStock",l:"Stock",r:(v,r)=> <div style={{display:"flex",alignItems:"center",gap:8}}><div style={{width:50,height:6,borderRadius:3,background:C.bd,overflow:"hidden"}}><div style={{width:`${Math.min(100,(v/Math.max(r.minStock*3,1))*100)}%`,height:"100%",borderRadius:3,background:v<=r.minStock?v===0?C.err:C.warn:C.ok}}/></div><span style={{fontWeight:600,color:v===0?C.err:v<=r.minStock?C.warn:C.tx}}>{v}</span><span style={{color:C.txM,fontSize:11}}>{r.unit}</span></div>},{k:"minStock",l:"Mín",nw:1,r:v=> <span style={{fontSize:12,color:C.txM}}>{v}</span>},{k:"unitCost",l:"Costo",nw:1,r:v=> <span style={{fontFamily:"monospace",fontSize:12}}>{fmt(v)}</span>},{k:"_",l:"Estado",r:(_,r)=>r.currentStock===0? <Badge v="danger">Sin stock</Badge>:r.currentStock<=r.minStock? <Badge v="warning">Bajo</Badge>: <Badge v="success">OK</Badge>}]} data={paged}/>
     {totalPg>1&&<div style={{display:"flex",justifyContent:"center",alignItems:"center",gap:8,marginTop:16}}><Btn size="sm" disabled={pg===0} onClick={()=>setPg(pg-1)}>← Anterior</Btn><span style={{fontSize:13,color:C.txM}}>Página {pg+1} de {totalPg}</span><Btn size="sm" disabled={pg>=totalPg-1} onClick={()=>setPg(pg+1)}>Siguiente →</Btn></div>}
@@ -301,6 +302,7 @@ const Inventory=({items:ITEMS=[],categories:CATEGORIES=[]})=>{
       {["SKU","Nombre","Descripción"].map(l=> <div key={l} style={{marginBottom:14}}><Label>{l}</Label><Inp/></div>)}
       <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}><Btn onClick={()=>setModal(false)}>Cancelar</Btn><Btn v="primary" onClick={()=>setModal(false)}>Guardar</Btn></div>
     </Modal>
+    <BulkUploadModal open={bulkModal} onClose={()=>setBulkModal(false)} onDone={refetch} categories={CATEGORIES} suppliers={SUPPLIERS}/>
   </div>
 };
 
@@ -494,7 +496,7 @@ export default function App(){
   const[sb,setSb]=useState(true);
   const{items,categories,suppliers,requisitions,withdrawals,loading,error,refetch}=useSupabaseData();
   const d={items,categories,suppliers,requisitions,withdrawals};
-  const render=()=>{if(loading)return <Loader/>;if(error)return <Loader error={error} onRetry={refetch}/>;switch(page){case"dashboard":return <Dashboard go={setPage} {...d}/>;case"inventory":return <Inventory items={items} categories={categories}/>;case"invoices":return <Invoices/>;case"requisitions":return <Reqs items={items} categories={categories} requisitions={requisitions}/>;case"withdrawals":return <Withdrawals withdrawals={withdrawals}/>;case"purchase-orders":return <POPage/>;case"suppliers":return <Suppl items={items} suppliers={suppliers}/>;case"reports":return <Reports items={items}/>;default:return <Dashboard go={setPage} {...d}/>}};
+  const render=()=>{if(loading)return <Loader/>;if(error)return <Loader error={error} onRetry={refetch}/>;switch(page){case"dashboard":return <Dashboard go={setPage} {...d}/>;case"inventory":return <Inventory items={items} categories={categories} suppliers={suppliers} refetch={refetch}/>;case"invoices":return <Invoices/>;case"requisitions":return <Reqs items={items} categories={categories} requisitions={requisitions}/>;case"withdrawals":return <Withdrawals withdrawals={withdrawals}/>;case"purchase-orders":return <POPage/>;case"suppliers":return <Suppl items={items} suppliers={suppliers}/>;case"reports":return <Reports items={items}/>;default:return <Dashboard go={setPage} {...d}/>}};
   return <div style={{display:"flex",height:"100vh",fontFamily:"'DM Sans','Segoe UI',system-ui,sans-serif",background:C.bg,color:C.tx}}>
     <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');*{box-sizing:border-box;margin:0;padding:0}::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:#D6D3D1;border-radius:3px}@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}input:focus,select:focus,textarea:focus{outline:none;border-color:${C.ac}!important;box-shadow:0 0 0 3px ${C.ac}20}`}</style>
 
