@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useRef, useEffect } from "react";
 import { INVOICES, POS, ACTIVITY, EXTRACTED_ITEMS } from "./data.js";
 import { useSupabaseData } from "./useSupabaseData.js";
+import { supabase } from "./supabaseClient.js";
 import { BulkUploadModal, downloadTemplate } from "./BulkUpload.jsx";
 
 // ─── STYLES & PRIMITIVES ───
@@ -353,11 +354,70 @@ const Reqs=({items:ITEMS=[],categories:CATEGORIES=[],requisitions:REQUISITIONS=[
 };
 
 // ─── PAGE: SUPPLIERS ───
-const Suppl=({items:ITEMS=[],suppliers:SUPPLIERS=[]})=>{const[s,setS]=useState("");const f=SUPPLIERS.filter(x=>!s||x.company.toLowerCase().includes(s.toLowerCase()));return <div>
-  <div style={{display:"flex",justifyContent:"space-between",marginBottom:20}}><Search value={s} onChange={setS} placeholder="Buscar proveedor..."/><Btn v="primary">+ Nuevo Proveedor</Btn></div>
+const SupplForm=({initial,onSave,onCancel,saving})=>{
+  const[f,setF]=useState(initial||{company:"",contact:"",phone:"",email:"",address:"",payment:"",notes:""});
+  const up=(k,v)=>setF({...f,[k]:v});
+  const valid=f.company.trim().length>0;
+  return <div style={{display:"flex",flexDirection:"column",gap:14}}>
+    <div><Label>Nombre de la empresa *</Label><Inp value={f.company} onChange={e=>up("company",e.target.value)} placeholder="Ej: Maderas del Sureste"/></div>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+      <div><Label>Contacto</Label><Inp value={f.contact} onChange={e=>up("contact",e.target.value)} placeholder="Nombre del contacto"/></div>
+      <div><Label>Teléfono</Label><Inp value={f.phone} onChange={e=>up("phone",e.target.value)} placeholder="(998) 123-4567"/></div>
+    </div>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+      <div><Label>Email</Label><Inp type="email" value={f.email} onChange={e=>up("email",e.target.value)} placeholder="correo@ejemplo.com"/></div>
+      <div><Label>Condiciones de pago</Label><Inp value={f.payment} onChange={e=>up("payment",e.target.value)} placeholder="Ej: 30 días crédito"/></div>
+    </div>
+    <div><Label>Dirección</Label><Inp value={f.address} onChange={e=>up("address",e.target.value)} placeholder="Dirección completa"/></div>
+    <div><Label>Notas</Label><Inp value={f.notes} onChange={e=>up("notes",e.target.value)} placeholder="Notas adicionales"/></div>
+    <div style={{display:"flex",gap:10,justifyContent:"flex-end",marginTop:6}}>
+      <Btn onClick={onCancel} disabled={saving}>Cancelar</Btn>
+      <Btn v="primary" onClick={()=>onSave(f)} disabled={!valid||saving}>{saving?"Guardando...":"Guardar"}</Btn>
+    </div>
+  </div>
+};
+
+const Suppl=({items:ITEMS=[],suppliers:SUPPLIERS=[],refetch})=>{
+  const[s,setS]=useState("");
+  const[newModal,setNewModal]=useState(false);
+  const[editModal,setEditModal]=useState(null);
+  const[saving,setSaving]=useState(false);
+  const[err,setErr]=useState(null);
+  const f=SUPPLIERS.filter(x=>!s||x.company.toLowerCase().includes(s.toLowerCase()));
+
+  const handleCreate=async(form)=>{
+    setSaving(true);setErr(null);
+    try{
+      const{error}=await supabase.from("suppliers").insert({name:form.company,contact_name:form.contact||null,phone:form.phone||null,email:form.email||null,address:form.address||null,payment_terms:form.payment||null,notes:form.notes||null,is_active:true});
+      if(error)throw error;
+      setNewModal(false);if(refetch)refetch();
+    }catch(e){setErr(e.message)}finally{setSaving(false)}
+  };
+
+  const handleEdit=async(form)=>{
+    if(!editModal)return;
+    setSaving(true);setErr(null);
+    try{
+      const{error}=await supabase.from("suppliers").update({name:form.company,contact_name:form.contact||null,phone:form.phone||null,email:form.email||null,address:form.address||null,payment_terms:form.payment||null,notes:form.notes||null}).eq("id",editModal.id);
+      if(error)throw error;
+      setEditModal(null);if(refetch)refetch();
+    }catch(e){setErr(e.message)}finally{setSaving(false)}
+  };
+
+  const handleToggleActive=async(sup)=>{
+    try{
+      const{error}=await supabase.from("suppliers").update({is_active:!sup.active}).eq("id",sup.id);
+      if(error)throw error;
+      if(refetch)refetch();
+    }catch(e){setErr(e.message)}
+  };
+
+  return <div>
+  <div style={{display:"flex",justifyContent:"space-between",marginBottom:20}}><Search value={s} onChange={setS} placeholder="Buscar proveedor..."/><Btn v="primary" onClick={()=>{setNewModal(true);setErr(null)}}>+ Nuevo Proveedor</Btn></div>
+  {err&&<div style={{marginBottom:16,padding:12,borderRadius:8,background:C.errBg,color:C.err,fontSize:13,display:"flex",justifyContent:"space-between",alignItems:"center"}}><span>{err}</span><button onClick={()=>setErr(null)} style={{background:"none",border:"none",cursor:"pointer",color:C.err,fontSize:16}}>×</button></div>}
   <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(320px,1fr))",gap:16}}>
-    {f.map(sup=>{const itemCount=ITEMS.filter(i=>i.supplier===sup.company).length;const cats=[...new Set(ITEMS.filter(i=>i.supplier===sup.company).map(i=>i.category))];return <Card key={sup.id} style={{transition:"all .15s",cursor:"pointer"}} onMouseEnter={e=>{e.currentTarget.style.boxShadow="0 4px 16px rgba(0,0,0,.08)";e.currentTarget.style.transform="translateY(-2px)"}} onMouseLeave={e=>{e.currentTarget.style.boxShadow="none";e.currentTarget.style.transform="none"}}>
-      <div style={{display:"flex",justifyContent:"space-between",marginBottom:12}}><div style={{fontSize:16,fontWeight:700}}>{sup.company}</div>{sup.active? <Badge v="success">Activo</Badge>: <Badge>Inactivo</Badge>}</div>
+    {f.map(sup=>{const itemCount=ITEMS.filter(i=>i.supplier===sup.company).length;const cats=[...new Set(ITEMS.filter(i=>i.supplier===sup.company).map(i=>i.category))];return <Card key={sup.id} style={{transition:"all .15s"}} onMouseEnter={e=>{e.currentTarget.style.boxShadow="0 4px 16px rgba(0,0,0,.08)";e.currentTarget.style.transform="translateY(-2px)"}} onMouseLeave={e=>{e.currentTarget.style.boxShadow="none";e.currentTarget.style.transform="none"}}>
+      <div style={{display:"flex",justifyContent:"space-between",marginBottom:12}}><div style={{fontSize:16,fontWeight:700}}>{sup.company}</div><div style={{display:"flex",gap:6,alignItems:"center"}}>{sup.active? <Badge v="success">Activo</Badge>: <Badge>Inactivo</Badge>}</div></div>
       <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap"}}>{cats.map(c=> <Badge key={c} v="accent">{c}</Badge>)}</div>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,fontSize:12}}>
         <div><span style={{color:C.txL}}>Artículos:</span><br/><span style={{fontWeight:600,fontSize:16}}>{itemCount}</span></div>
@@ -365,8 +425,20 @@ const Suppl=({items:ITEMS=[],suppliers:SUPPLIERS=[]})=>{const[s,setS]=useState("
         <div><span style={{color:C.txL}}>Teléfono:</span><br/>{sup.phone||<span style={{color:C.txL,fontStyle:"italic"}}>—</span>}</div>
         <div><span style={{color:C.txL}}>Condiciones:</span><br/>{sup.payment||<span style={{color:C.txL,fontStyle:"italic"}}>—</span>}</div>
       </div>
+      {sup.email&&<div style={{fontSize:12,marginTop:8}}><span style={{color:C.txL}}>Email:</span> {sup.email}</div>}
+      {sup.address&&<div style={{fontSize:12,marginTop:4}}><span style={{color:C.txL}}>Dirección:</span> {sup.address}</div>}
+      <div style={{display:"flex",gap:8,marginTop:14,borderTop:`1px solid ${C.bd}`,paddingTop:12}}>
+        <Btn size="sm" onClick={()=>{setEditModal(sup);setErr(null)}}>✏️ Editar</Btn>
+        <Btn size="sm" v={sup.active?"ghost":"success"} onClick={()=>handleToggleActive(sup)}>{sup.active?"Desactivar":"Activar"}</Btn>
+      </div>
     </Card>})}
   </div>
+  <Modal open={newModal} onClose={()=>setNewModal(false)} title="Nuevo Proveedor" w={520}>
+    <SupplForm onSave={handleCreate} onCancel={()=>setNewModal(false)} saving={saving}/>
+  </Modal>
+  <Modal open={!!editModal} onClose={()=>setEditModal(null)} title="Editar Proveedor" w={520}>
+    {editModal&&<SupplForm initial={editModal} onSave={handleEdit} onCancel={()=>setEditModal(null)} saving={saving}/>}
+  </Modal>
 </div>};
 
 // ─── PAGE: POs ───
@@ -496,7 +568,7 @@ export default function App(){
   const[sb,setSb]=useState(true);
   const{items,categories,suppliers,requisitions,withdrawals,loading,error,refetch}=useSupabaseData();
   const d={items,categories,suppliers,requisitions,withdrawals};
-  const render=()=>{if(loading)return <Loader/>;if(error)return <Loader error={error} onRetry={refetch}/>;switch(page){case"dashboard":return <Dashboard go={setPage} {...d}/>;case"inventory":return <Inventory items={items} categories={categories} suppliers={suppliers} refetch={refetch}/>;case"invoices":return <Invoices/>;case"requisitions":return <Reqs items={items} categories={categories} requisitions={requisitions}/>;case"withdrawals":return <Withdrawals withdrawals={withdrawals}/>;case"purchase-orders":return <POPage/>;case"suppliers":return <Suppl items={items} suppliers={suppliers}/>;case"reports":return <Reports items={items}/>;default:return <Dashboard go={setPage} {...d}/>}};
+  const render=()=>{if(loading)return <Loader/>;if(error)return <Loader error={error} onRetry={refetch}/>;switch(page){case"dashboard":return <Dashboard go={setPage} {...d}/>;case"inventory":return <Inventory items={items} categories={categories} suppliers={suppliers} refetch={refetch}/>;case"invoices":return <Invoices/>;case"requisitions":return <Reqs items={items} categories={categories} requisitions={requisitions}/>;case"withdrawals":return <Withdrawals withdrawals={withdrawals}/>;case"purchase-orders":return <POPage/>;case"suppliers":return <Suppl items={items} suppliers={suppliers} refetch={refetch}/>;case"reports":return <Reports items={items}/>;default:return <Dashboard go={setPage} {...d}/>}};
   return <div style={{display:"flex",height:"100vh",fontFamily:"'DM Sans','Segoe UI',system-ui,sans-serif",background:C.bg,color:C.tx}}>
     <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');*{box-sizing:border-box;margin:0;padding:0}::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:#D6D3D1;border-radius:3px}@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}input:focus,select:focus,textarea:focus{outline:none;border-color:${C.ac}!important;box-shadow:0 0 0 3px ${C.ac}20}`}</style>
 
