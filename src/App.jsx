@@ -2,6 +2,7 @@ import React, { useState, useMemo, useRef, useEffect } from "react";
 import { INVOICES, POS, ACTIVITY, EXTRACTED_ITEMS } from "./data.js";
 import { useSupabaseData } from "./useSupabaseData.js";
 import { supabase } from "./supabaseClient.js";
+import { approveRequisition, rejectRequisition, returnRequisition, dispatchWithdrawal, rejectWithdrawal, markDelivered, sendReminder } from "./actions.js";
 import { BulkUploadModal, downloadTemplate } from "./BulkUpload.jsx";
 
 // ─── STYLES & PRIMITIVES ───
@@ -127,12 +128,15 @@ const NewReqPage=({onBack,items:ITEMS=[],categories:CATEGORIES=[]})=>{
 };
 
 // ─── REQUISITION DETAIL (APPROVAL VIEW) ───
-const ReqDetailPage=({req,onBack,items:ITEMS=[],categories:CATEGORIES=[]})=>{
+const ReqDetailPage=({req,onBack,items:ITEMS=[],categories:CATEGORIES=[],refetch})=>{
   const[items,setItems]=useState(req.items.map(i=>({...i,action:null,linked:null})));
   const[linkM,setLinkM]=useState(null);
   const[catM,setCatM]=useState(null);
   const[rejM,setRejM]=useState(false);
   const[rejR,setRejR]=useState("");
+  const[busy,setBusy]=useState(false);
+  const[actionErr,setActionErr]=useState(null);
+  const doAction=async(fn,...args)=>{setBusy(true);setActionErr(null);try{await fn(...args);if(refetch)await refetch();onBack()}catch(e){setActionErr(e.message)}finally{setBusy(false)}};
   const freeI=items.filter(i=>i.type==="free_text");
   const unresolved=freeI.filter(i=>!i.action);
   const pending=req.status==="pending_approval";
@@ -197,10 +201,11 @@ const ReqDetailPage=({req,onBack,items:ITEMS=[],categories:CATEGORIES=[]})=>{
           <div style={{borderTop:`1px solid ${C.bd}`,paddingTop:10,display:"flex",justifyContent:"space-between",fontSize:13}}><span style={{fontWeight:600}}>Costo estimado</span><span style={{fontWeight:700,fontFamily:"monospace"}}>{fmt(req.estimatedCost)}</span></div>
         </div>
         {unresolved.length>0&&<div style={{background:C.warnBg,borderRadius:8,padding:10,marginBottom:16,fontSize:12,color:C.warn,lineHeight:1.5}}>⚠ Resuelve los {unresolved.length} items no catalogados antes de aprobar.</div>}
+        {actionErr&&<div style={{background:C.errBg,borderRadius:8,padding:10,marginBottom:16,fontSize:12,color:C.err}}>{actionErr}</div>}
         <div style={{display:"flex",flexDirection:"column",gap:8}}>
-          <Btn v="success" size="lg" disabled={unresolved.length>0} onClick={()=>{alert("✅ Requisición aprobada");onBack()}} style={{width:"100%",justifyContent:"center"}}>✓ Aprobar</Btn>
-          <Btn v="danger" size="lg" onClick={()=>setRejM(true)} style={{width:"100%",justifyContent:"center"}}>✕ Rechazar</Btn>
-          <Btn size="lg" onClick={()=>{alert("↩ Devuelta con comentarios");onBack()}} style={{width:"100%",justifyContent:"center"}}>↩ Devolver</Btn>
+          <Btn v="success" size="lg" disabled={unresolved.length>0||busy} onClick={()=>doAction(approveRequisition,req.id)} style={{width:"100%",justifyContent:"center"}}>{busy?"Procesando...":"✓ Aprobar"}</Btn>
+          <Btn v="danger" size="lg" disabled={busy} onClick={()=>setRejM(true)} style={{width:"100%",justifyContent:"center"}}>✕ Rechazar</Btn>
+          <Btn size="lg" disabled={busy} onClick={()=>doAction(returnRequisition,req.id)} style={{width:"100%",justifyContent:"center"}}>↩ Devolver</Btn>
         </div>
       </Card>}
       {!pending&&<Card><h3 style={{fontSize:14,fontWeight:700,margin:"0 0 12px",color:C.txM}}>Estado</h3><p style={{fontSize:14}}>Esta requisición está <strong>{req.status==="approved"?"aprobada":req.status==="in_progress"?"en proceso":"completada"}</strong>.</p></Card>}
@@ -241,7 +246,7 @@ const ReqDetailPage=({req,onBack,items:ITEMS=[],categories:CATEGORIES=[]})=>{
     <Modal open={rejM} onClose={()=>setRejM(false)} title="Rechazar Requisición" w={440}>
       <p style={{fontSize:13,color:C.txM,marginBottom:12}}>Razón del rechazo:</p>
       <textarea value={rejR} onChange={e=>setRejR(e.target.value)} placeholder="ej: Proyecto cancelado..." rows={4} style={{width:"100%",padding:"10px 12px",borderRadius:8,border:`1px solid ${C.bd}`,fontSize:14,fontFamily:"inherit",resize:"vertical",boxSizing:"border-box"}}/>
-      <div style={{display:"flex",gap:10,justifyContent:"flex-end",marginTop:16}}><Btn onClick={()=>setRejM(false)}>Cancelar</Btn><Btn v="danger" disabled={!rejR.trim()} onClick={()=>{alert("❌ Rechazada");setRejM(false);onBack()}}>Rechazar</Btn></div>
+      <div style={{display:"flex",gap:10,justifyContent:"flex-end",marginTop:16}}><Btn onClick={()=>setRejM(false)} disabled={busy}>Cancelar</Btn><Btn v="danger" disabled={!rejR.trim()||busy} onClick={()=>{setRejM(false);doAction(rejectRequisition,req.id,rejR)}}>{busy?"Procesando...":"Rechazar"}</Btn></div>
     </Modal>
   </div>
 };
@@ -326,10 +331,10 @@ const Invoices=()=>{const[sel,setSel]=useState(null);if(sel)return <InvReview in
 </div>};
 
 // ─── PAGE: REQUISITIONS (KANBAN) ───
-const Reqs=({items:ITEMS=[],categories:CATEGORIES=[],requisitions:REQUISITIONS=[]})=>{
+const Reqs=({items:ITEMS=[],categories:CATEGORIES=[],requisitions:REQUISITIONS=[],refetch})=>{
   const[det,setDet]=useState(null);const[newR,setNewR]=useState(false);
   if(newR)return <NewReqPage onBack={()=>setNewR(false)} items={ITEMS} categories={CATEGORIES}/>;
-  if(det)return <ReqDetailPage req={det} onBack={()=>setDet(null)} items={ITEMS} categories={CATEGORIES}/>;
+  if(det)return <ReqDetailPage req={det} onBack={()=>setDet(null)} items={ITEMS} categories={CATEGORIES} refetch={refetch}/>;
   const cols=[{k:"pending_approval",l:"Pendiente Aprobación",c:"#F59E0B",bg:"#FFFBEB"},{k:"approved",l:"Aprobada",c:"#3B82F6",bg:"#EFF6FF"},{k:"in_progress",l:"En Proceso",c:"#8B5CF6",bg:"#F5F3FF"},{k:"completed",l:"Completada",c:"#22C55E",bg:"#F0FDF4"}];
   return <div>
     <div style={{display:"flex",justifyContent:"space-between",marginBottom:20}}><Search placeholder="Buscar requisición..." value="" onChange={()=>{}}/><Btn v="primary" onClick={()=>setNewR(true)}>+ Nueva Requisición</Btn></div>
@@ -449,9 +454,11 @@ const POPage=()=><div>
 // ─── PAGE: WITHDRAWALS (VALES DE SALIDA) ───
 const WBadge=({s})=>{const m={requested:["Solicitado","warning",true],ready:["Listo p/ entrega","info",false],dispatched:["Entregado","purple",false],received:["Confirmado","success",false],partial:["Parcial","accent",false],self_service:["Auto-servicio","default",false],rejected:["Rechazado","danger",false]};const[l,v,p]=m[s]||[s,"default",false];return <Badge v={v} pulse={p}>{l}</Badge>};
 
-const WithdrawalDetail=({w,onBack})=>{
+const WithdrawalDetail=({w,onBack,refetch})=>{
   const totalCost=w.items.reduce((s,i)=>(i.qtyDisp||i.qtyReq)*i.cost,0);
   const isPending=w.status==="requested",isReady=w.status==="ready",isDisp=w.status==="dispatched";
+  const[busy,setBusy]=useState(false);const[actionErr,setActionErr]=useState(null);
+  const doAction=async(fn,...args)=>{setBusy(true);setActionErr(null);try{await fn(...args);if(refetch)await refetch();onBack()}catch(e){setActionErr(e.message)}finally{setBusy(false)}};
   const Bub=({from,text,time,bot,btns})=><div style={{display:"flex",justifyContent:bot?"flex-start":"flex-end",marginBottom:8}}><div style={{maxWidth:"85%",background:bot?"#F0F0F0":"#DCF8C6",borderRadius:bot?"4px 16px 16px 16px":"16px 4px 16px 16px",padding:"10px 14px"}}>{bot&&<div style={{fontSize:11,fontWeight:700,color:C.info,marginBottom:4}}>🤖 ERP Bot</div>}<div style={{fontSize:13,lineHeight:1.5,whiteSpace:"pre-wrap"}}>{text}</div>{btns&&<div style={{display:"flex",gap:6,marginTop:8,flexWrap:"wrap"}}>{btns.map((b,i)=><span key={i} style={{padding:"6px 12px",borderRadius:8,background:bot?"#E3E3E3":"#C5EBA0",fontSize:12,fontWeight:600}}>{b}</span>)}</div>}<div style={{fontSize:10,color:"#999",marginTop:4,textAlign:"right"}}>{time}{!bot&&" ✓✓"}</div></div></div>;
   const chatMsgs=()=>{
     const its=w.items.map(i=>`${i.qtyReq} ${i.unit} — ${i.name}`).join(", ");
@@ -487,10 +494,11 @@ const WithdrawalDetail=({w,onBack})=>{
           {isPending&&<div>
             <div style={{background:C.warnBg,borderRadius:8,padding:12,marginBottom:16,fontSize:13,color:C.warn}}>⏳ <strong>{w.requestedBy}</strong> espera este material.</div>
             {w.items.map(it=><div key={it.id} style={{marginBottom:12}}><div style={{fontSize:13,fontWeight:600,marginBottom:4}}>{it.name}</div><div style={{fontSize:12,color:C.txM}}>Pedido: {it.qtyReq} {it.unit} · <span style={{color:it.stock>=it.qtyReq?C.ok:C.err}}>Stock: {it.stock}</span></div>{it.stock<it.qtyReq&&<div style={{fontSize:12,color:C.err,marginTop:4}}>⚠️ Insuficiente. Max: {it.stock}</div>}<div style={{marginTop:6}}><Label>Despachar</Label><Inp type="number" defaultValue={Math.min(it.qtyReq,it.stock)} style={{width:100}}/></div></div>)}
-            <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:16}}><Btn v="success" size="lg" onClick={()=>alert("✅ Surtido")} style={{width:"100%",justifyContent:"center"}}>✅ Surtir</Btn><Btn v="danger" size="lg" onClick={()=>alert("❌ Rechazado")} style={{width:"100%",justifyContent:"center"}}>❌ Rechazar</Btn></div>
+            {actionErr&&<div style={{background:C.errBg,borderRadius:8,padding:10,marginBottom:12,fontSize:12,color:C.err}}>{actionErr}</div>}
+            <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:16}}><Btn v="success" size="lg" disabled={busy} onClick={()=>doAction(dispatchWithdrawal,w.id)} style={{width:"100%",justifyContent:"center"}}>{busy?"Procesando...":"✅ Surtir"}</Btn><Btn v="danger" size="lg" disabled={busy} onClick={()=>doAction(rejectWithdrawal,w.id)} style={{width:"100%",justifyContent:"center"}}>❌ Rechazar</Btn></div>
           </div>}
-          {isReady&&<div><div style={{background:C.infoBg,borderRadius:8,padding:12,marginBottom:16,fontSize:13,color:C.info}}>📦 Listo. Entrega a <strong>{w.requestedBy}</strong>.</div><Btn v="primary" size="lg" onClick={()=>alert("🤝 Entregado")} style={{width:"100%",justifyContent:"center"}}>🤝 Marcar Entregado</Btn></div>}
-          {isDisp&&<div><div style={{background:C.purBg,borderRadius:8,padding:12,marginBottom:16,fontSize:13,color:C.pur}}>⏳ Esperando confirmación de <strong>{w.requestedBy}</strong>. Auto-confirma en 2h.</div><Btn v="ghost" size="lg" onClick={()=>alert("📩 Recordatorio enviado")} style={{width:"100%",justifyContent:"center"}}>📩 Recordatorio</Btn></div>}
+          {isReady&&<div><div style={{background:C.infoBg,borderRadius:8,padding:12,marginBottom:16,fontSize:13,color:C.info}}>📦 Listo. Entrega a <strong>{w.requestedBy}</strong>.</div>{actionErr&&<div style={{background:C.errBg,borderRadius:8,padding:10,marginBottom:12,fontSize:12,color:C.err}}>{actionErr}</div>}<Btn v="primary" size="lg" disabled={busy} onClick={()=>doAction(markDelivered,w.id)} style={{width:"100%",justifyContent:"center"}}>{busy?"Procesando...":"🤝 Marcar Entregado"}</Btn></div>}
+          {isDisp&&<div><div style={{background:C.purBg,borderRadius:8,padding:12,marginBottom:16,fontSize:13,color:C.pur}}>⏳ Esperando confirmación de <strong>{w.requestedBy}</strong>. Auto-confirma en 2h.</div>{actionErr&&<div style={{background:C.errBg,borderRadius:8,padding:10,marginBottom:12,fontSize:12,color:C.err}}>{actionErr}</div>}<Btn v="ghost" size="lg" disabled={busy} onClick={async()=>{setBusy(true);setActionErr(null);try{await sendReminder(w.id);alert("📩 Recordatorio enviado")}catch(e){setActionErr(e.message)}finally{setBusy(false)}}} style={{width:"100%",justifyContent:"center"}}>{busy?"Enviando...":"📩 Recordatorio"}</Btn></div>}
         </Card>}
         <Card style={{padding:0,overflow:"hidden"}}>
           <div style={{background:"#075E54",padding:"12px 16px",display:"flex",alignItems:"center",gap:10}}><div style={{width:32,height:32,borderRadius:"50%",background:"#128C7E",display:"flex",alignItems:"center",justifyContent:"center",color:"white",fontSize:14}}>🤖</div><div><div style={{fontSize:14,fontWeight:600,color:"white"}}>ERP Carpintería Bot</div><div style={{fontSize:11,color:"#D1D5DB"}}>Telegram</div></div></div>
@@ -501,9 +509,10 @@ const WithdrawalDetail=({w,onBack})=>{
   </div>
 };
 
-const Withdrawals=({withdrawals:WITHDRAWALS=[]})=>{
+const Withdrawals=({withdrawals:WITHDRAWALS=[],refetch})=>{
   const[det,setDet]=useState(null);
-  if(det)return <WithdrawalDetail w={det} onBack={()=>setDet(null)}/>;
+  const[busy,setBusy]=useState(null);
+  if(det)return <WithdrawalDetail w={det} onBack={()=>setDet(null)} refetch={refetch}/>;
   const active=WITHDRAWALS.filter(w=>["requested","ready","dispatched"].includes(w.status));
   const history=WITHDRAWALS.filter(w=>!["requested","ready","dispatched"].includes(w.status));
   const pendC=WITHDRAWALS.filter(w=>w.status==="requested").length;
@@ -524,8 +533,8 @@ const Withdrawals=({withdrawals:WITHDRAWALS=[]})=>{
           <div style={{display:"flex",justifyContent:"space-between",marginBottom:10}}><div><span style={{fontFamily:"monospace",fontSize:12,color:C.ac,fontWeight:600}}>{w.number}</span><span style={{fontSize:11,color:C.txL,marginLeft:8}}>{w.requestedAt}</span></div><WBadge s={w.status}/></div>
           <div style={{fontSize:14,fontWeight:600,marginBottom:4}}>{w.requestedBy} → {w.project}</div>
           <div style={{fontSize:12,color:C.txM,marginBottom:10}}>{w.items.map(i=>`${i.qtyReq} ${i.unit} ${i.name.split("(")[0].trim()}`).join(", ")}</div>
-          {w.status==="requested"&&<div style={{display:"flex",gap:6}}><Btn v="success" size="sm" onClick={e=>{e.stopPropagation();alert("✅ Surtido")}}>✅ Surtir</Btn><Btn size="sm" onClick={e=>{e.stopPropagation();alert("📦 Parcial")}}>📦 Parcial</Btn><Btn v="danger" size="sm" onClick={e=>{e.stopPropagation();alert("❌")}}>❌</Btn></div>}
-          {w.status==="ready"&&<Btn v="primary" size="sm" onClick={e=>{e.stopPropagation();alert("🤝 Entregado")}}>🤝 Entregar</Btn>}
+          {w.status==="requested"&&<div style={{display:"flex",gap:6}}><Btn v="success" size="sm" disabled={busy===w.id} onClick={async e=>{e.stopPropagation();setBusy(w.id);try{await dispatchWithdrawal(w.id);if(refetch)await refetch()}catch(er){alert(er.message)}finally{setBusy(null)}}}>{busy===w.id?"...":"✅ Surtir"}</Btn><Btn v="danger" size="sm" disabled={busy===w.id} onClick={async e=>{e.stopPropagation();setBusy(w.id);try{await rejectWithdrawal(w.id);if(refetch)await refetch()}catch(er){alert(er.message)}finally{setBusy(null)}}}>❌</Btn></div>}
+          {w.status==="ready"&&<Btn v="primary" size="sm" disabled={busy===w.id} onClick={async e=>{e.stopPropagation();setBusy(w.id);try{await markDelivered(w.id);if(refetch)await refetch()}catch(er){alert(er.message)}finally{setBusy(null)}}}>{busy===w.id?"...":"🤝 Entregar"}</Btn>}
           {w.status==="dispatched"&&<div style={{fontSize:12,color:C.pur}}>⏳ Esperando confirmación de {w.requestedBy.split(" ")[0]}...</div>}
         </Card>)}
       </div>
@@ -568,7 +577,7 @@ export default function App(){
   const[sb,setSb]=useState(true);
   const{items,categories,suppliers,requisitions,withdrawals,loading,error,refetch}=useSupabaseData();
   const d={items,categories,suppliers,requisitions,withdrawals};
-  const render=()=>{if(loading)return <Loader/>;if(error)return <Loader error={error} onRetry={refetch}/>;switch(page){case"dashboard":return <Dashboard go={setPage} {...d}/>;case"inventory":return <Inventory items={items} categories={categories} suppliers={suppliers} refetch={refetch}/>;case"invoices":return <Invoices/>;case"requisitions":return <Reqs items={items} categories={categories} requisitions={requisitions}/>;case"withdrawals":return <Withdrawals withdrawals={withdrawals}/>;case"purchase-orders":return <POPage/>;case"suppliers":return <Suppl items={items} suppliers={suppliers} refetch={refetch}/>;case"reports":return <Reports items={items}/>;default:return <Dashboard go={setPage} {...d}/>}};
+  const render=()=>{if(loading)return <Loader/>;if(error)return <Loader error={error} onRetry={refetch}/>;switch(page){case"dashboard":return <Dashboard go={setPage} {...d}/>;case"inventory":return <Inventory items={items} categories={categories} suppliers={suppliers} refetch={refetch}/>;case"invoices":return <Invoices/>;case"requisitions":return <Reqs items={items} categories={categories} requisitions={requisitions} refetch={refetch}/>;case"withdrawals":return <Withdrawals withdrawals={withdrawals} refetch={refetch}/>;case"purchase-orders":return <POPage/>;case"suppliers":return <Suppl items={items} suppliers={suppliers} refetch={refetch}/>;case"reports":return <Reports items={items}/>;default:return <Dashboard go={setPage} {...d}/>}};
   return <div style={{display:"flex",height:"100vh",fontFamily:"'DM Sans','Segoe UI',system-ui,sans-serif",background:C.bg,color:C.tx}}>
     <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');*{box-sizing:border-box;margin:0;padding:0}::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:#D6D3D1;border-radius:3px}@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}input:focus,select:focus,textarea:focus{outline:none;border-color:${C.ac}!important;box-shadow:0 0 0 3px ${C.ac}20}`}</style>
 
