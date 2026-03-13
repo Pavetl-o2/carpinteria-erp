@@ -122,6 +122,61 @@ export function useSupabaseData() {
         };
       });
 
+      // Build timeline from withdrawal timestamps
+      const buildTimeline = (w, wItems) => {
+        const tl = [];
+        const fmtT = (d) => {
+          if (!d) return "";
+          const dt = new Date(d);
+          return dt.toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" });
+        };
+        const fmtDT = (d) => {
+          if (!d) return "";
+          const dt = new Date(d);
+          const now = new Date();
+          const diff = now - dt;
+          if (diff < 86400000) return fmtT(d);
+          if (diff < 172800000) return "Ayer " + fmtT(d);
+          return dt.toLocaleDateString("es-MX") + " " + fmtT(d);
+        };
+        const requester = w.requested_by_user?.name || "Usuario";
+        const dispatcher = w.dispatched_by_user?.name || "Almacenista";
+        const itemsList = (wItems || []).map((i) => `${i.qtyReq} ${i.unit} — ${i.name}`).join(", ");
+
+        if (w.requested_at) {
+          tl.push({ t: fmtDT(w.requested_at), who: requester, icon: "📤", text: `Solicitó: ${itemsList}${w.project_name || w.project?.name ? ` para ${w.project_name || w.project?.name}` : ""}`, type: "request" });
+        }
+
+        if (w.status === "rejected") {
+          tl.push({ t: fmtDT(w.dispatched_at || w.requested_at), who: "Sistema", icon: "❌", text: "Vale rechazado.", type: "alert" });
+        } else if (w.status === "self_service") {
+          tl.push({ t: fmtDT(w.received_at || w.requested_at), who: requester, icon: "🔓", text: "Auto-servicio. Almacenista ausente.", type: "self" });
+          tl.push({ t: fmtDT(w.received_at || w.requested_at), who: "Sistema", icon: "📊", text: "Stock descontado.", type: "system" });
+        } else {
+          if (w.dispatched_at) {
+            const hasPartial = (wItems || []).some((i) => i.qtyDisp != null && i.qtyDisp < i.qtyReq);
+            if (hasPartial) {
+              tl.push({ t: fmtDT(w.dispatched_at), who: dispatcher, icon: "⚠️", text: `Surtido parcial: ${(wItems || []).map((i) => `${i.qtyDisp != null ? i.qtyDisp : "?"}/${i.qtyReq} ${i.unit} — ${i.name}`).join(", ")}`, type: "partial" });
+            } else {
+              tl.push({ t: fmtDT(w.dispatched_at), who: dispatcher, icon: "✅", text: "Surtido completo.", type: "dispatch" });
+            }
+          }
+
+          if (w.delivered_at) {
+            tl.push({ t: fmtDT(w.delivered_at), who: dispatcher, icon: "🤝", text: `Entregado a ${requester}.`, type: "handoff" });
+          }
+
+          if (w.received_at) {
+            tl.push({ t: fmtDT(w.received_at), who: requester, icon: "✅", text: "Confirmó recepción.", type: "confirm" });
+            tl.push({ t: fmtDT(w.received_at), who: "Sistema", icon: "📊", text: "Stock descontado.", type: "system" });
+          } else if (w.delivered_at && !w.received_at) {
+            tl.push({ t: "", who: "Sistema", icon: "⏳", text: `Esperando confirmación de ${requester}.`, type: "waiting" });
+          }
+        }
+
+        return tl;
+      };
+
       // Map withdrawals
       const mappedWd = (wdRes.data || []).map((w) => {
         const wItems = (w.withdrawal_items || []).map((wi, idx) => ({
@@ -162,7 +217,7 @@ export function useSupabaseData() {
           receivedAt: fmtDate(w.received_at),
           notes: w.notes || "",
           channel: w.channel || "telegram",
-          timeline: [],
+          timeline: buildTimeline(w, wItems),
         };
       });
 
