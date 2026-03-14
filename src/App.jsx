@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect } from "react";
-import { INVOICES, POS, ACTIVITY, EXTRACTED_ITEMS } from "./data.js";
+import { INVOICES, POS, EXTRACTED_ITEMS } from "./data.js";
 import { useSupabaseData } from "./useSupabaseData.js";
 import { supabase } from "./supabaseClient.js";
 import { approveRequisition, rejectRequisition, returnRequisition, dispatchWithdrawal, rejectWithdrawal, markDelivered, sendReminder } from "./actions.js";
@@ -252,13 +252,15 @@ const ReqDetailPage=({req,onBack,items:ITEMS=[],categories:CATEGORIES=[],refetch
 };
 
 // ─── PAGE: DASHBOARD ───
-const Dashboard=({go,items:ITEMS=[],categories:CATEGORIES=[],requisitions:REQUISITIONS=[],withdrawals:WITHDRAWALS=[]})=>{
+const Dashboard=({go,items:ITEMS=[],categories:CATEGORIES=[],requisitions:REQUISITIONS=[],withdrawals:WITHDRAWALS=[],recentActivity:ACTIVITY=[],projectConsumption:PROJ_CON=[]})=>{
   const low=ITEMS.filter(i=>i.currentStock<=i.minStock&&i.currentStock>0);
   const zero=ITEMS.filter(i=>i.currentStock===0);
   const pend=REQUISITIONS.filter(r=>r.status==="pending_approval");
   const activeW=WITHDRAWALS.filter(w=>["requested","ready","dispatched"].includes(w.status));
   const val=ITEMS.reduce((s,i)=>s+i.currentStock*i.unitCost,0);
-  const kc=[{k:"pending_approval",l:"Pendiente",c:"#F59E0B"},{k:"approved",l:"Aprobada",c:"#3B82F6"},{k:"in_progress",l:"En proceso",c:"#8B5CF6"},{k:"completed",l:"Completada",c:"#22C55E"}];
+  const totalProjCost=PROJ_CON.reduce((s,p)=>s+p.cost,0);
+  const maxProjCost=PROJ_CON.length>0?PROJ_CON[0].cost:1;
+  const monthName=new Date().toLocaleDateString("es-MX",{month:"long",year:"numeric"});
   return <div>
     <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))",gap:16,marginBottom:24}}>
       <StatCard icon="📦" label="Items en Catálogo" value={ITEMS.length} sub={`${zero.length} sin stock`}/>
@@ -269,13 +271,25 @@ const Dashboard=({go,items:ITEMS=[],categories:CATEGORIES=[],requisitions:REQUIS
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:20,marginBottom:24}}>
       <Card>
         <div style={{display:"flex",justifyContent:"space-between",marginBottom:16}}><h3 style={{fontSize:15,fontWeight:700,margin:0}}>Actividad Reciente</h3></div>
+        {ACTIVITY.length===0&&<div style={{textAlign:"center",padding:"20px 0",color:C.txL,fontSize:13}}>Sin actividad reciente</div>}
         {ACTIVITY.map((a,i)=><div key={a.id} style={{padding:"10px 0",borderBottom:i<ACTIVITY.length-1?`1px solid ${C.bd}`:"none",display:"flex",justifyContent:"space-between",alignItems:"center"}}><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:8,height:8,borderRadius:"50%",flexShrink:0,background:a.type==="alert"?C.err:a.type==="inv"?C.info:a.type==="ok"?C.ok:a.type==="del"?C.pur:C.ac}}/><span style={{fontSize:13}}>{a.text}</span></div><span style={{fontSize:11,color:C.txL,whiteSpace:"nowrap",marginLeft:12}}>{a.time}</span></div>)}
       </Card>
       <Card>
-        <div style={{display:"flex",justifyContent:"space-between",marginBottom:16}}><h3 style={{fontSize:15,fontWeight:700,margin:0}}>Requisiciones</h3><Btn v="ghost" size="sm" onClick={()=>go("requisitions")}>Ver tablero</Btn></div>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10}}>
-          {kc.map(col=>{const it=REQUISITIONS.filter(r=>r.status===col.k);return <div key={col.k} style={{background:"#FAFAF9",borderRadius:10,padding:12}}><div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10}}><div style={{width:8,height:8,borderRadius:"50%",background:col.c}}/><span style={{fontSize:12,fontWeight:600,color:C.txM}}>{col.l}</span><span style={{fontSize:11,background:C.card,padding:"1px 6px",borderRadius:99,color:C.txM,marginLeft:"auto"}}>{it.length}</span></div>{it.slice(0,3).map(r=><div key={r.id} style={{background:C.card,borderRadius:8,padding:"8px 10px",marginBottom:6,border:`1px solid ${C.bd}`,fontSize:12}}><div style={{fontWeight:600,marginBottom:2}}>{r.number}</div><div style={{color:C.txM,fontSize:11}}>{r.title}</div></div>)}</div>})}
-        </div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}><h3 style={{fontSize:15,fontWeight:700,margin:0}}>Consumo por Proyecto</h3><span style={{fontSize:12,color:C.txM,textTransform:"capitalize"}}>{monthName}</span></div>
+        {PROJ_CON.length===0&&<div style={{textAlign:"center",padding:"20px 0",color:C.txL,fontSize:13}}>Sin consumos este mes</div>}
+        {PROJ_CON.map((p,i)=><div key={p.project} style={{marginBottom:i<PROJ_CON.length-1?14:0}}>
+          <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+            <span style={{fontSize:13,fontWeight:600}}>{p.project}</span>
+            <span style={{fontSize:13,fontWeight:700,fontFamily:"monospace"}}>{fmt(p.cost)}</span>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <div style={{flex:1,height:8,borderRadius:4,background:C.bd,overflow:"hidden"}}>
+              <div style={{width:`${Math.max(4,(p.cost/maxProjCost)*100)}%`,height:"100%",borderRadius:4,background:i===0?C.ac:i===1?"#3B82F6":i===2?"#8B5CF6":"#6B7280",transition:"width .5s"}}/>
+            </div>
+            <span style={{fontSize:11,color:C.txM,whiteSpace:"nowrap"}}>{p.vales} vale{p.vales!==1?"s":""}</span>
+          </div>
+        </div>)}
+        {PROJ_CON.length>0&&<div style={{marginTop:14,paddingTop:12,borderTop:`1px solid ${C.bd}`,display:"flex",justifyContent:"space-between",fontSize:13}}><span style={{fontWeight:600,color:C.txM}}>Total del mes</span><span style={{fontWeight:700,fontFamily:"monospace"}}>{fmt(totalProjCost)}</span></div>}
       </Card>
     </div>
     <Card>
@@ -575,8 +589,8 @@ const TITLES={dashboard:"Dashboard",inventory:"Inventario",invoices:"Facturas",r
 export default function App(){
   const[page,setPage]=useState("dashboard");
   const[sb,setSb]=useState(true);
-  const{items,categories,suppliers,requisitions,withdrawals,loading,error,refetch}=useSupabaseData();
-  const d={items,categories,suppliers,requisitions,withdrawals};
+  const{items,categories,suppliers,requisitions,withdrawals,recentActivity,projectConsumption,loading,error,refetch}=useSupabaseData();
+  const d={items,categories,suppliers,requisitions,withdrawals,recentActivity,projectConsumption};
   const render=()=>{if(loading)return <Loader/>;if(error)return <Loader error={error} onRetry={refetch}/>;switch(page){case"dashboard":return <Dashboard go={setPage} {...d}/>;case"inventory":return <Inventory items={items} categories={categories} suppliers={suppliers} refetch={refetch}/>;case"invoices":return <Invoices/>;case"requisitions":return <Reqs items={items} categories={categories} requisitions={requisitions} refetch={refetch}/>;case"withdrawals":return <Withdrawals withdrawals={withdrawals} refetch={refetch}/>;case"purchase-orders":return <POPage/>;case"suppliers":return <Suppl items={items} suppliers={suppliers} refetch={refetch}/>;case"reports":return <Reports items={items}/>;default:return <Dashboard go={setPage} {...d}/>}};
   return <div style={{display:"flex",height:"100vh",fontFamily:"'DM Sans','Segoe UI',system-ui,sans-serif",background:C.bg,color:C.tx}}>
     <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');*{box-sizing:border-box;margin:0;padding:0}::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:#D6D3D1;border-radius:3px}@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}input:focus,select:focus,textarea:focus{outline:none;border-color:${C.ac}!important;box-shadow:0 0 0 3px ${C.ac}20}`}</style>

@@ -13,15 +13,6 @@ export const POS = [
   { id: "po3", number: "PO-2026-0036", supplier: "Triplay Cancún", status: "received", date: "2026-02-15", total: 5600, payment: "paid", numItems: 4, received: 4 },
 ];
 
-export const ACTIVITY = [
-  { id: "a1", text: "Carlos solicitó materiales para Cocina López", type: "req", time: "25 min" },
-  { id: "a2", text: "Factura Maderas del Sureste procesada (5 items)", type: "inv", time: "1 hora" },
-  { id: "a3", text: "PO-0038 entrega parcial (3/5 items)", type: "del", time: "2 horas" },
-  { id: "a4", text: "Stock bajo: Barniz Transparente (2 uds)", type: "alert", time: "3 horas" },
-  { id: "a5", text: "Miguel solicitó acabados para Mueble TV", type: "req", time: "4 horas" },
-  { id: "a6", text: "REQ-0040 aprobada por Admin", type: "ok", time: "5 horas" },
-];
-
 export const EXTRACTED_ITEMS = [
   { id: "ei1", rawDesc: "Triplay pino 18mm 4x8", match: "Triplay Pino 18mm (4×8ft)", conf: 0.95, qty: 3, unit: "hoja", price: 450, total: 1350, st: "matched" },
   { id: "ei2", rawDesc: "Bisagra oculta 35mm c/base", match: "Bisagra Oculta 35mm", conf: 0.88, qty: 20, unit: "pza", price: 38, total: 760, st: "matched" },
