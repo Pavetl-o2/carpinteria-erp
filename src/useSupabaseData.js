@@ -9,6 +9,7 @@ export function useSupabaseData() {
   const [withdrawals, setWithdrawals] = useState([]);
   const [recentActivity, setRecentActivity] = useState([]);
   const [projectConsumption, setProjectConsumption] = useState([]);
+  const [purchaseOrders, setPurchaseOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -21,7 +22,7 @@ export function useSupabaseData() {
       monthStart.setDate(1);
       monthStart.setHours(0, 0, 0, 0);
 
-      const [itemsRes, catsRes, suppRes, reqsRes, wdRes, txRes, projConRes] = await Promise.all([
+      const [itemsRes, catsRes, suppRes, reqsRes, wdRes, txRes, projConRes, poRes] = await Promise.all([
         supabase
           .from("items")
           .select("*, categories(name), suppliers(name)")
@@ -64,6 +65,14 @@ export function useSupabaseData() {
           )
           .gte("requested_at", monthStart.toISOString())
           .in("status", ["ready", "dispatched", "received", "partial", "self_service"]),
+        // Purchase orders
+        supabase
+          .from("purchase_orders")
+          .select(
+            `*, supplier:suppliers(name, phone, email), created_by_user:users!purchase_orders_created_by_fkey(name), purchase_order_items(quantity_ordered, quantity_received, unit_cost, item:items(name, sku, unit))`
+          )
+          .order("created_at", { ascending: false })
+          .limit(50),
       ]);
 
       if (itemsRes.error) throw itemsRes.error;
@@ -74,6 +83,7 @@ export function useSupabaseData() {
       // Non-critical queries: don't throw, just log
       if (txRes.error) console.warn("inventory_transactions:", txRes.error.message);
       if (projConRes.error) console.warn("project consumption:", projConRes.error.message);
+      if (poRes.error) console.warn("purchase_orders:", poRes.error.message);
 
       // Map items to UI-compatible format
       const mappedItems = (itemsRes.data || []).map((i) => ({
@@ -327,6 +337,39 @@ export function useSupabaseData() {
       const projArr = Object.values(projMap).sort((a, b) => b.cost - a.cost);
       setProjectConsumption(projArr);
 
+      // Map purchase orders
+      const mappedPOs = (poRes.data || []).map((po) => {
+        const poItems = (po.purchase_order_items || []);
+        const totalOrdered = poItems.reduce((s, i) => s + (Number(i.quantity_ordered) || 0), 0);
+        const totalReceived = poItems.reduce((s, i) => s + (Number(i.quantity_received) || 0), 0);
+        const total = poItems.reduce((s, i) => s + (Number(i.quantity_ordered) || 0) * (Number(i.unit_cost) || 0), 0);
+        return {
+          id: po.id,
+          number: po.po_number || po.order_number || "",
+          supplier: po.supplier?.name || "",
+          supplierPhone: po.supplier?.phone || "",
+          supplierEmail: po.supplier?.email || "",
+          status: po.status || "draft",
+          date: po.created_at ? new Date(po.created_at).toLocaleDateString("es-MX") : "",
+          total,
+          numItems: poItems.length,
+          received: poItems.filter((i) => Number(i.quantity_received) >= Number(i.quantity_ordered)).length,
+          totalOrdered,
+          totalReceived,
+          createdBy: po.created_by_user?.name || "",
+          items: poItems.map((i, idx) => ({
+            id: i.id || `poi-${idx}`,
+            name: i.item?.name || "",
+            sku: i.item?.sku || "",
+            unit: i.item?.unit || "pza",
+            qtyOrdered: Number(i.quantity_ordered) || 0,
+            qtyReceived: Number(i.quantity_received) || 0,
+            unitCost: Number(i.unit_cost) || 0,
+          })),
+        };
+      });
+      setPurchaseOrders(mappedPOs);
+
       setItems(mappedItems);
       setCategories(mappedCats);
       setSuppliers(mappedSuppliers);
@@ -344,5 +387,5 @@ export function useSupabaseData() {
     fetchAll();
   }, [fetchAll]);
 
-  return { items, categories, suppliers, requisitions, withdrawals, recentActivity, projectConsumption, loading, error, refetch: fetchAll };
+  return { items, categories, suppliers, requisitions, withdrawals, purchaseOrders, recentActivity, projectConsumption, loading, error, refetch: fetchAll };
 }

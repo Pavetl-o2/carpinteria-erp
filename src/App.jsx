@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect } from "react";
-import { INVOICES, POS, EXTRACTED_ITEMS } from "./data.js";
+import { INVOICES, EXTRACTED_ITEMS } from "./data.js";
 import { useSupabaseData } from "./useSupabaseData.js";
 import { supabase } from "./supabaseClient.js";
 import { approveRequisition, rejectRequisition, returnRequisition, dispatchWithdrawal, rejectWithdrawal, markDelivered, sendReminder } from "./actions.js";
@@ -11,7 +11,7 @@ const Ic=({d,size=18,...p})=><svg width={size} height={size} viewBox="0 0 24 24"
 const fmt=n=>n!=null?`$${n.toLocaleString("es-MX")}`:"—";
 
 const Badge=({children,v="default",pulse})=>{const s={default:{background:C.bd,color:C.tx},success:{background:C.okBg,color:C.ok},warning:{background:C.warnBg,color:C.warn},danger:{background:C.errBg,color:C.err},info:{background:C.infoBg,color:C.info},purple:{background:C.purBg,color:C.pur},accent:{background:C.acL,color:C.ac}};return <span style={{...s[v],padding:"2px 10px",borderRadius:9999,fontSize:12,fontWeight:600,letterSpacing:.3,whiteSpace:"nowrap",display:"inline-flex",alignItems:"center",gap:4}}>{pulse&&<span style={{width:6,height:6,borderRadius:"50%",background:"currentColor",animation:"pulse 1.5s infinite"}}/>}{children}</span>};
-const SBadge=({s})=>{const m={draft:["Borrador","default"],pending_approval:["Pendiente","warning"],approved:["Aprobada","info"],in_progress:["En proceso","purple"],completed:["Completada","success"],rejected:["Rechazada","danger"],processing:["Procesando","warning"],awaiting_review:["En revisión","accent"],saved:["Guardada","success"],sent:["Enviada","info"],partially_received:["Parcial","accent"],received:["Recibida","success"],unpaid:["Sin pagar","danger"],paid:["Pagada","success"]};const[l,vr]=m[s]||[s,"default"];return <Badge v={vr} pulse={s==="processing"}>{l}</Badge>};
+const SBadge=({s})=>{const m={draft:["Borrador","default"],pending_approval:["Pendiente","warning"],approved:["Aprobada","info"],in_progress:["En proceso","purple"],completed:["Completada","success"],rejected:["Rechazada","danger"],cancelled:["Cancelada","danger"],processing:["Procesando","warning"],awaiting_review:["En revisión","accent"],saved:["Guardada","success"],sent:["Enviada","info"],quoted:["Cotizada","accent"],pending_payment:["Pago pendiente","warning"],paid:["Pagada","success"],pending_delivery:["Espera entrega","purple"],partially_received:["Parcial","accent"],received:["Recibida","success"],unpaid:["Sin pagar","danger"],ordered:["Ordenada","info"],partially_ordered:["Orden parcial","accent"]};const[l,vr]=m[s]||[s,"default"];return <Badge v={vr} pulse={s==="processing"}>{l}</Badge>};
 const PBadge=({p})=>{const m={low:["Baja","default"],medium:["Media","info"],high:["Alta","warning"],urgent:["Urgente","danger"]};const[l,v]=m[p]||[p,"default"];return <Badge v={v} pulse={p==="urgent"}>{l}</Badge>};
 const Stars=({r})=><span style={{display:"inline-flex",gap:1,color:C.ac}}>{Array.from({length:5},(_,i)=><span key={i} style={{color:i<Math.floor(r)?C.ac:C.bd}}>★</span>)}<span style={{marginLeft:4,fontSize:12,color:C.txM}}>{r}</span></span>;
 const Card=({children,style:sx,onClick})=><div onClick={onClick} style={{background:C.card,borderRadius:12,border:`1px solid ${C.bd}`,padding:20,cursor:onClick?"pointer":"default",transition:"box-shadow .2s",...sx}}>{children}</div>;
@@ -349,11 +349,11 @@ const Reqs=({items:ITEMS=[],categories:CATEGORIES=[],requisitions:REQUISITIONS=[
   const[det,setDet]=useState(null);const[newR,setNewR]=useState(false);
   if(newR)return <NewReqPage onBack={()=>setNewR(false)} items={ITEMS} categories={CATEGORIES}/>;
   if(det)return <ReqDetailPage req={det} onBack={()=>setDet(null)} items={ITEMS} categories={CATEGORIES} refetch={refetch}/>;
-  const cols=[{k:"pending_approval",l:"Pendiente Aprobación",c:"#F59E0B",bg:"#FFFBEB"},{k:"approved",l:"Aprobada",c:"#3B82F6",bg:"#EFF6FF"},{k:"in_progress",l:"En Proceso",c:"#8B5CF6",bg:"#F5F3FF"},{k:"completed",l:"Completada",c:"#22C55E",bg:"#F0FDF4"}];
+  const cols=[{k:["draft","pending_approval"],l:"Pendiente Aprobación",c:"#F59E0B",bg:"#FFFBEB"},{k:["approved"],l:"Aprobada",c:"#3B82F6",bg:"#EFF6FF"},{k:["ordered","partially_ordered"],l:"En Proceso",c:"#8B5CF6",bg:"#F5F3FF"},{k:["received"],l:"Completada",c:"#22C55E",bg:"#F0FDF4"},{k:["rejected","cancelled"],l:"Rechazada",c:"#DC2626",bg:"#FEF2F2"}];
   return <div>
     <div style={{display:"flex",justifyContent:"space-between",marginBottom:20}}><Search placeholder="Buscar requisición..." value="" onChange={()=>{}}/><Btn v="primary" onClick={()=>setNewR(true)}>+ Nueva Requisición</Btn></div>
-    <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:16,alignItems:"start"}}>
-      {cols.map(col=>{const rs=REQUISITIONS.filter(r=>r.status===col.k);return <div key={col.k} style={{background:col.bg,borderRadius:14,padding:14,minHeight:400}}>
+    <div style={{display:"grid",gridTemplateColumns:`repeat(${cols.length},1fr)`,gap:16,alignItems:"start"}}>
+      {cols.map(col=>{const rs=REQUISITIONS.filter(r=>col.k.includes(r.status));return <div key={col.k[0]} style={{background:col.bg,borderRadius:14,padding:14,minHeight:400}}>
         <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14,paddingBottom:10,borderBottom:`2px solid ${col.c}30`}}><div style={{width:10,height:10,borderRadius:"50%",background:col.c}}/><span style={{fontSize:13,fontWeight:700}}>{col.l}</span><span style={{fontSize:12,background:`${col.c}20`,color:col.c,padding:"2px 8px",borderRadius:99,fontWeight:700,marginLeft:"auto"}}>{rs.length}</span></div>
         <div style={{display:"flex",flexDirection:"column",gap:10}}>
           {rs.map(r=>{const fc=r.items.filter(i=>i.type==="free_text").length;return <div key={r.id} onClick={()=>setDet(r)} style={{background:C.card,borderRadius:10,padding:14,border:`1px solid ${C.bd}`,cursor:"pointer",transition:"box-shadow .15s,transform .15s"}} onMouseEnter={e=>{e.currentTarget.style.boxShadow="0 4px 12px rgba(0,0,0,.08)";e.currentTarget.style.transform="translateY(-1px)"}} onMouseLeave={e=>{e.currentTarget.style.boxShadow="none";e.currentTarget.style.transform="none"}}>
@@ -461,9 +461,44 @@ const Suppl=({items:ITEMS=[],suppliers:SUPPLIERS=[],refetch})=>{
 </div>};
 
 // ─── PAGE: POs ───
-const POPage=()=><div>
-  <div style={{display:"flex",justifyContent:"space-between",marginBottom:20}}><Search placeholder="Buscar orden..." value="" onChange={()=>{}}/><Btn v="primary">+ Nueva Orden</Btn></div>
-  <Tbl cols={[{k:"number",l:"# Orden",nw:1,r:v=><span style={{fontFamily:"monospace",fontSize:12,fontWeight:600,color:C.ac}}>{v}</span>},{k:"supplier",l:"Proveedor",r:v=><span style={{fontWeight:600}}>{v}</span>},{k:"date",l:"Fecha",nw:1},{k:"numItems",l:"Items",r:(v,r)=>`${r.received}/${v}`},{k:"total",l:"Total",nw:1,r:v=><span style={{fontWeight:600,fontFamily:"monospace"}}>{fmt(v)}</span>},{k:"status",l:"Entrega",r:v=><SBadge s={v}/>},{k:"payment",l:"Pago",r:v=><SBadge s={v}/>}]} data={POS}/></div>;
+const POPage=({purchaseOrders:POS=[]})=>{
+  const[s,setS]=useState("");const[det,setDet]=useState(null);
+  const f=POS.filter(p=>!s||p.number.toLowerCase().includes(s.toLowerCase())||p.supplier.toLowerCase().includes(s.toLowerCase()));
+  if(det)return <div>
+    <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:20}}><Btn onClick={()=>setDet(null)}>← Volver</Btn><h2 style={{margin:0,fontSize:18,fontWeight:700}}>{det.number}</h2><SBadge s={det.status}/></div>
+    <div style={{display:"grid",gridTemplateColumns:"2fr 1fr",gap:20}}>
+      <div>
+        <Card style={{marginBottom:20}}><div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:16}}>{[["Proveedor",det.supplier],["Fecha",det.date],["Creada por",det.createdBy||"—"],["Items",`${det.received}/${det.numItems} recibidos`],["Total",fmt(det.total)],["Estado",null]].map(([l,v])=><div key={l}><div style={{fontSize:11,color:C.txL,marginBottom:2}}>{l}</div>{l==="Estado"?<SBadge s={det.status}/>:<div style={{fontSize:14,fontWeight:600}}>{v}</div>}</div>)}</div>
+        {det.supplierPhone&&<div style={{marginTop:12,fontSize:12,color:C.txM}}>📞 {det.supplierPhone} {det.supplierEmail&&`· ✉️ ${det.supplierEmail}`}</div>}
+        </Card>
+        <Card>
+          <h3 style={{fontSize:14,fontWeight:700,margin:"0 0 16px",color:C.txM,textTransform:"uppercase",letterSpacing:.5}}>Items de la Orden ({det.items.length})</h3>
+          {det.items.map((it,idx)=><div key={it.id} style={{padding:"12px 0",borderBottom:idx<det.items.length-1?`1px solid ${C.bd}`:"none",display:"flex",alignItems:"center",gap:14}}>
+            <div style={{flex:1}}><div style={{fontWeight:600,fontSize:13}}>{it.name}</div><div style={{fontSize:11,color:C.txM}}>{it.sku} · {fmt(it.unitCost)}/{it.unit}</div></div>
+            <div style={{textAlign:"right"}}><div style={{display:"flex",alignItems:"center",gap:8}}><div style={{textAlign:"center"}}><div style={{fontSize:11,color:C.txL}}>Ordenado</div><div style={{fontSize:16,fontWeight:700}}>{it.qtyOrdered}</div></div><span style={{color:C.txL}}>→</span><div style={{textAlign:"center"}}><div style={{fontSize:11,color:C.txL}}>Recibido</div><div style={{fontSize:16,fontWeight:700,color:it.qtyReceived>=it.qtyOrdered?C.ok:it.qtyReceived>0?C.warn:C.txL}}>{it.qtyReceived}</div></div></div>
+            <div style={{fontSize:12,color:C.txM,marginTop:2}}>{it.unit} · {fmt(it.qtyOrdered*it.unitCost)}</div></div>
+          </div>)}
+          <div style={{marginTop:12,paddingTop:12,borderTop:`2px solid ${C.bd}`,display:"flex",justifyContent:"space-between"}}><span style={{fontWeight:700}}>Total</span><span style={{fontWeight:700,fontFamily:"monospace",fontSize:16}}>{fmt(det.total)}</span></div>
+        </Card>
+      </div>
+      <Card style={{position:"sticky",top:20,alignSelf:"start"}}>
+        <h3 style={{fontSize:14,fontWeight:700,margin:"0 0 16px",color:C.txM,textTransform:"uppercase",letterSpacing:.5}}>Progreso</h3>
+        <div style={{textAlign:"center",marginBottom:16}}>
+          <div style={{fontSize:36,fontWeight:700,color:det.received===det.numItems?C.ok:C.ac}}>{det.numItems>0?Math.round(det.received/det.numItems*100):0}%</div>
+          <div style={{fontSize:12,color:C.txM}}>{det.received} de {det.numItems} items recibidos</div>
+        </div>
+        <div style={{height:8,borderRadius:4,background:C.bd,overflow:"hidden",marginBottom:16}}>
+          <div style={{width:`${det.numItems>0?(det.received/det.numItems)*100:0}%`,height:"100%",borderRadius:4,background:det.received===det.numItems?C.ok:C.ac,transition:"width .3s"}}/>
+        </div>
+      </Card>
+    </div>
+  </div>;
+  return <div>
+    <div style={{display:"flex",justifyContent:"space-between",marginBottom:20}}><Search value={s} onChange={setS} placeholder="Buscar orden o proveedor..."/></div>
+    {f.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:C.txL,fontSize:14}}>No hay órdenes de compra</div>}
+    <Tbl cols={[{k:"number",l:"# Orden",nw:1,r:v=><span style={{fontFamily:"monospace",fontSize:12,fontWeight:600,color:C.ac}}>{v}</span>},{k:"supplier",l:"Proveedor",r:v=><span style={{fontWeight:600}}>{v}</span>},{k:"date",l:"Fecha",nw:1},{k:"numItems",l:"Items",r:(v,r)=><span>{r.received}/{v}</span>},{k:"total",l:"Total",nw:1,r:v=><span style={{fontWeight:600,fontFamily:"monospace"}}>{fmt(v)}</span>},{k:"status",l:"Estado",r:v=><SBadge s={v}/>}]} data={f} onRow={r=>setDet(r)}/>
+  </div>
+};
 
 // ─── PAGE: WITHDRAWALS (VALES DE SALIDA) ───
 const WBadge=({s})=>{const m={requested:["Solicitado","warning",true],ready:["Listo p/ entrega","info",false],dispatched:["Entregado","purple",false],received:["Confirmado","success",false],partial:["Parcial","accent",false],self_service:["Auto-servicio","default",false],rejected:["Rechazado","danger",false]};const[l,v,p]=m[s]||[s,"default",false];return <Badge v={v} pulse={p}>{l}</Badge>};
@@ -589,9 +624,9 @@ const TITLES={dashboard:"Dashboard",inventory:"Inventario",invoices:"Facturas",r
 export default function App(){
   const[page,setPage]=useState("dashboard");
   const[sb,setSb]=useState(true);
-  const{items,categories,suppliers,requisitions,withdrawals,recentActivity,projectConsumption,loading,error,refetch}=useSupabaseData();
-  const d={items,categories,suppliers,requisitions,withdrawals,recentActivity,projectConsumption};
-  const render=()=>{if(loading)return <Loader/>;if(error)return <Loader error={error} onRetry={refetch}/>;switch(page){case"dashboard":return <Dashboard go={setPage} {...d}/>;case"inventory":return <Inventory items={items} categories={categories} suppliers={suppliers} refetch={refetch}/>;case"invoices":return <Invoices/>;case"requisitions":return <Reqs items={items} categories={categories} requisitions={requisitions} refetch={refetch}/>;case"withdrawals":return <Withdrawals withdrawals={withdrawals} refetch={refetch}/>;case"purchase-orders":return <POPage/>;case"suppliers":return <Suppl items={items} suppliers={suppliers} refetch={refetch}/>;case"reports":return <Reports items={items}/>;default:return <Dashboard go={setPage} {...d}/>}};
+  const{items,categories,suppliers,requisitions,withdrawals,purchaseOrders,recentActivity,projectConsumption,loading,error,refetch}=useSupabaseData();
+  const d={items,categories,suppliers,requisitions,withdrawals,purchaseOrders,recentActivity,projectConsumption};
+  const render=()=>{if(loading)return <Loader/>;if(error)return <Loader error={error} onRetry={refetch}/>;switch(page){case"dashboard":return <Dashboard go={setPage} {...d}/>;case"inventory":return <Inventory items={items} categories={categories} suppliers={suppliers} refetch={refetch}/>;case"invoices":return <Invoices/>;case"requisitions":return <Reqs items={items} categories={categories} requisitions={requisitions} refetch={refetch}/>;case"withdrawals":return <Withdrawals withdrawals={withdrawals} refetch={refetch}/>;case"purchase-orders":return <POPage purchaseOrders={purchaseOrders}/>;case"suppliers":return <Suppl items={items} suppliers={suppliers} refetch={refetch}/>;case"reports":return <Reports items={items}/>;default:return <Dashboard go={setPage} {...d}/>}};
   return <div style={{display:"flex",height:"100vh",fontFamily:"'DM Sans','Segoe UI',system-ui,sans-serif",background:C.bg,color:C.tx}}>
     <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');*{box-sizing:border-box;margin:0;padding:0}::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:#D6D3D1;border-radius:3px}@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}input:focus,select:focus,textarea:focus{outline:none;border-color:${C.ac}!important;box-shadow:0 0 0 3px ${C.ac}20}`}</style>
 

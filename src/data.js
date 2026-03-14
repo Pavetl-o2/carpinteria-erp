@@ -7,12 +7,6 @@ export const INVOICES = [
   { id: "inv5", supplier: "Desconocido", invoiceNum: null, date: "2026-02-24", numItems: 0, total: null, status: "processing", confidence: null, uploadedBy: "Carlos" },
 ];
 
-export const POS = [
-  { id: "po1", number: "PO-2026-0038", supplier: "Maderas del Sureste", status: "partially_received", date: "2026-02-20", total: 8500, payment: "unpaid", numItems: 5, received: 3 },
-  { id: "po2", number: "PO-2026-0037", supplier: "Herrajes y Más", status: "sent", date: "2026-02-22", total: 4200, payment: "unpaid", numItems: 6, received: 0 },
-  { id: "po3", number: "PO-2026-0036", supplier: "Triplay Cancún", status: "received", date: "2026-02-15", total: 5600, payment: "paid", numItems: 4, received: 4 },
-];
-
 export const EXTRACTED_ITEMS = [
   { id: "ei1", rawDesc: "Triplay pino 18mm 4x8", match: "Triplay Pino 18mm (4×8ft)", conf: 0.95, qty: 3, unit: "hoja", price: 450, total: 1350, st: "matched" },
   { id: "ei2", rawDesc: "Bisagra oculta 35mm c/base", match: "Bisagra Oculta 35mm", conf: 0.88, qty: 20, unit: "pza", price: 38, total: 760, st: "matched" },
