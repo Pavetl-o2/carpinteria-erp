@@ -37,7 +37,7 @@ export function generatePurchaseOrderPDF(po) {
 
   doc.setFontSize(22);
   doc.setTextColor(...BLUE);
-  doc.text("PURCHASE ORDER", W - margin, y + 2, { align: "right" });
+  doc.text("ORDEN DE COMPRA", W - margin, y + 2, { align: "right" });
 
   y += 8;
   doc.setFontSize(9);
@@ -45,7 +45,7 @@ export function generatePurchaseOrderPDF(po) {
   doc.setTextColor(...GRAY);
   doc.text(COMPANY.address, margin, y);
   doc.text(COMPANY.city, margin, y + 4);
-  doc.text(`Phone: ${COMPANY.phone}`, margin, y + 8);
+  doc.text(`Tel: ${COMPANY.phone}`, margin, y + 8);
   doc.text(`Email: ${COMPANY.email}`, margin, y + 12);
 
   // DATE & PO# boxes
@@ -56,8 +56,8 @@ export function generatePurchaseOrderPDF(po) {
   doc.setFont("helvetica", "bold");
   doc.setFontSize(9);
   doc.setTextColor(...BLUE);
-  doc.text("DATE", boxX + 2, y + 3);
-  doc.text("PO #", boxX + 2, y + 11);
+  doc.text("FECHA", boxX + 2, y + 3);
+  doc.text("OC #", boxX + 2, y + 11);
   doc.setFont("helvetica", "normal");
   doc.setTextColor(...BLACK);
   doc.text(po.date || "", boxX + 34, y + 3);
@@ -67,22 +67,25 @@ export function generatePurchaseOrderPDF(po) {
 
   y += 22;
 
-  // ─── VENDOR & SHIP TO ───
-  const halfW = (innerW - 6) / 2;
+  // ─── PROVEEDOR & ENVIAR A ───
+  const gap = 6;
+  const halfW = (innerW - gap) / 2;
+  const leftX = margin;
+  const rightX = margin + halfW + gap;
 
-  // Vendor header
+  // Proveedor header
   doc.setFillColor(...BLUE);
-  doc.rect(margin, y, halfW, 7, "F");
+  doc.rect(leftX, y, halfW, 7, "F");
   doc.setFont("helvetica", "bold");
   doc.setFontSize(10);
   doc.setTextColor(...WHITE);
-  doc.text("VENDOR", margin + 3, y + 5);
+  doc.text("PROVEEDOR", leftX + 3, y + 5);
 
-  // Ship To header
-  doc.rect(margin + halfW + 6, y, halfW, 7, "F");
-  doc.text("SHIP TO", margin + halfW + 9, y + 5);
+  // Enviar A header
+  doc.rect(rightX, y, halfW, 7, "F");
+  doc.text("ENVIAR A", rightX + 3, y + 5);
 
-  y += 9;
+  y += 7;
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9);
   doc.setTextColor(...BLACK);
@@ -92,14 +95,9 @@ export function generatePurchaseOrderPDF(po) {
     po.supplier || "",
     po.supplierContact || "",
     po.supplierAddress || "",
-    po.supplierPhone ? `Phone: ${po.supplierPhone}` : "",
+    po.supplierPhone ? `Tel: ${po.supplierPhone}` : "",
     po.supplierEmail ? `Email: ${po.supplierEmail}` : "",
   ].filter(Boolean);
-
-  vendorLines.forEach((line, i) => {
-    doc.text(line, margin + 3, y + i * 5);
-  });
-  doc.rect(margin, y - 2, halfW, Math.max(vendorLines.length * 5 + 4, 25));
 
   // Ship To info
   const shipLines = [
@@ -107,18 +105,27 @@ export function generatePurchaseOrderPDF(po) {
     SHIP_TO.company,
     SHIP_TO.address,
     SHIP_TO.city,
-    `Phone: ${SHIP_TO.phone}`,
+    `Tel: ${SHIP_TO.phone}`,
   ];
-  shipLines.forEach((line, i) => {
-    doc.text(line, margin + halfW + 9, y + i * 5);
+
+  const maxLines = Math.max(vendorLines.length, shipLines.length);
+  const boxH = Math.max(maxLines * 5 + 4, 25);
+
+  vendorLines.forEach((line, i) => {
+    doc.text(line, leftX + 3, y + 3 + i * 5);
   });
-  doc.rect(margin + halfW + 6, y - 2, halfW, Math.max(shipLines.length * 5 + 4, 25));
+  doc.rect(leftX, y, halfW, boxH);
 
-  y += Math.max(vendorLines.length, shipLines.length) * 5 + 8;
+  shipLines.forEach((line, i) => {
+    doc.text(line, rightX + 3, y + 3 + i * 5);
+  });
+  doc.rect(rightX, y, halfW, boxH);
 
-  // ─── REQUISITIONER / SHIP VIA / F.O.B. / SHIPPING TERMS ───
+  y += boxH + 6;
+
+  // ─── SOLICITANTE / ENVÍO VÍA / F.O.B. / TÉRMINOS DE ENVÍO ───
   const qW = innerW / 4;
-  const labels4 = ["REQUISITIONER", "SHIP VIA", "F.O.B.", "SHIPPING TERMS"];
+  const labels4 = ["SOLICITANTE", "ENVÍO VÍA", "F.O.B.", "TÉRMINOS ENVÍO"];
   const vals4 = [po.createdBy || "—", "—", "—", "—"];
 
   doc.setFillColor(...BLUE);
@@ -143,9 +150,9 @@ export function generatePurchaseOrderPDF(po) {
 
   y += 14;
 
-  // ─── ITEMS TABLE ───
+  // ─── TABLA DE ARTÍCULOS ───
   const colWidths = [30, innerW - 30 - 22 - 28 - 30, 22, 28, 30];
-  const colHeaders = ["ITEM #", "DESCRIPTION", "QTY", "UNIT PRICE", "TOTAL"];
+  const colHeaders = ["ARTÍCULO", "DESCRIPCIÓN", "CANT.", "P. UNITARIO", "TOTAL"];
   const colAligns = ["left", "left", "center", "right", "right"];
 
   // Header
@@ -213,16 +220,16 @@ export function generatePurchaseOrderPDF(po) {
 
   y += 4;
 
-  // ─── TOTALS ───
+  // ─── TOTALES ───
   const subtotal = items.reduce((s, i) => s + (i.qtyOrdered || 0) * (i.unitCost || 0), 0);
   const totalsX = margin + innerW - 60;
   const totalsValX = margin + innerW - 2;
 
   const totalsRows = [
     { label: "SUBTOTAL", value: fmtNum(subtotal), bold: false },
-    { label: "TAX", value: "", bold: false },
-    { label: "SHIPPING", value: "", bold: false },
-    { label: "OTHER", value: "", bold: false },
+    { label: "IMPUESTO", value: "", bold: false },
+    { label: "ENVÍO", value: "", bold: false },
+    { label: "OTRO", value: "", bold: false },
   ];
 
   // Comments box
@@ -233,7 +240,7 @@ export function generatePurchaseOrderPDF(po) {
   doc.setFont("helvetica", "bold");
   doc.setFontSize(8);
   doc.setTextColor(...BLUE);
-  doc.text("Comments or Special Instructions", commentsX + 2, y + 5);
+  doc.text("Comentarios o instrucciones especiales", commentsX + 2, y + 5);
   doc.setFont("helvetica", "normal");
   doc.setFontSize(8);
   doc.setTextColor(...BLACK);
@@ -268,12 +275,12 @@ export function generatePurchaseOrderPDF(po) {
 
   y += 20;
 
-  // ─── FOOTER ───
+  // ─── PIE DE PÁGINA ───
   doc.setFont("helvetica", "italic");
   doc.setFontSize(9);
   doc.setTextColor(...BLUE);
   doc.text(
-    "If you have any questions about this purchase order, please contact",
+    "Si tiene alguna pregunta sobre esta orden de compra, por favor contacte a",
     W / 2,
     y,
     { align: "center" }
