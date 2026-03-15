@@ -4,6 +4,7 @@ import { useSupabaseData } from "./useSupabaseData.js";
 import { supabase } from "./supabaseClient.js";
 import { approveRequisition, rejectRequisition, returnRequisition, dispatchWithdrawal, rejectWithdrawal, markDelivered, sendReminder } from "./actions.js";
 import { BulkUploadModal, downloadTemplate } from "./BulkUpload.jsx";
+import { generatePurchaseOrderPDF } from "./poPdf.js";
 
 // ─── STYLES & PRIMITIVES ───
 const C = { bg:"#F7F5F2",card:"#FFF",sb:"#1C1917",sbH:"#292524",sbA:"#44403C",ac:"#B45309",acL:"#FEF3C7",tx:"#1C1917",txM:"#78716C",txL:"#A8A29E",txW:"#F5F5F4",bd:"#E7E5E4",ok:"#15803D",okBg:"#DCFCE7",warn:"#A16207",warnBg:"#FEF9C3",err:"#DC2626",errBg:"#FEE2E2",info:"#1D4ED8",infoBg:"#DBEAFE",pur:"#7C3AED",purBg:"#EDE9FE" };
@@ -465,7 +466,7 @@ const POPage=({purchaseOrders:POS=[]})=>{
   const[s,setS]=useState("");const[det,setDet]=useState(null);
   const f=POS.filter(p=>!s||p.number.toLowerCase().includes(s.toLowerCase())||p.supplier.toLowerCase().includes(s.toLowerCase()));
   if(det)return <div>
-    <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:20}}><Btn onClick={()=>setDet(null)}>← Volver</Btn><h2 style={{margin:0,fontSize:18,fontWeight:700}}>{det.number}</h2><SBadge s={det.status}/></div>
+    <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:20}}><Btn onClick={()=>setDet(null)}>← Volver</Btn><h2 style={{margin:0,fontSize:18,fontWeight:700}}>{det.number}</h2><SBadge s={det.status}/><div style={{marginLeft:"auto"}}><Btn v="primary" onClick={()=>generatePurchaseOrderPDF(det)}>📄 Descargar PDF</Btn></div></div>
     <div style={{display:"grid",gridTemplateColumns:"2fr 1fr",gap:20}}>
       <div>
         <Card style={{marginBottom:20}}><div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:16}}>{[["Proveedor",det.supplier],["Fecha",det.date],["Creada por",det.createdBy||"—"],["Items",`${det.received}/${det.numItems} recibidos`],["Total",fmt(det.total)],["Estado",null]].map(([l,v])=><div key={l}><div style={{fontSize:11,color:C.txL,marginBottom:2}}>{l}</div>{l==="Estado"?<SBadge s={det.status}/>:<div style={{fontSize:14,fontWeight:600}}>{v}</div>}</div>)}</div>
