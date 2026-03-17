@@ -1,13 +1,23 @@
 import { supabase } from "./supabaseClient.js";
 
+class StaleStatusError extends Error {
+  constructor(entity = "registro") {
+    super(`Este ${entity} ya fue procesado desde otro canal. Refrescando datos...`);
+    this.name = "StaleStatusError";
+  }
+}
+
 // ─── Requisition Actions ───
 
 export async function approveRequisition(reqId) {
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("requisitions")
     .update({ status: "approved" })
-    .eq("id", reqId);
+    .eq("id", reqId)
+    .in("status", ["pending_approval", "draft"])
+    .select();
   if (error) throw new Error("Error al aprobar: " + error.message);
+  if (!data || data.length === 0) throw new StaleStatusError("requisición");
 
   await callEdgeFunction("notify-action", {
     action: "requisition_approved",
@@ -16,11 +26,14 @@ export async function approveRequisition(reqId) {
 }
 
 export async function rejectRequisition(reqId, reason) {
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("requisitions")
     .update({ status: "rejected" })
-    .eq("id", reqId);
+    .eq("id", reqId)
+    .in("status", ["pending_approval", "draft"])
+    .select();
   if (error) throw new Error("Error al rechazar: " + error.message);
+  if (!data || data.length === 0) throw new StaleStatusError("requisición");
 
   await callEdgeFunction("notify-action", {
     action: "requisition_rejected",
@@ -30,11 +43,14 @@ export async function rejectRequisition(reqId, reason) {
 }
 
 export async function returnRequisition(reqId) {
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("requisitions")
     .update({ status: "draft" })
-    .eq("id", reqId);
+    .eq("id", reqId)
+    .in("status", ["pending_approval"])
+    .select();
   if (error) throw new Error("Error al devolver: " + error.message);
+  if (!data || data.length === 0) throw new StaleStatusError("requisición");
 
   await callEdgeFunction("notify-action", {
     action: "requisition_returned",
@@ -45,11 +61,14 @@ export async function returnRequisition(reqId) {
 // ─── Withdrawal Actions ───
 
 export async function dispatchWithdrawal(withdrawalId) {
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("material_withdrawals")
     .update({ status: "ready", dispatched_at: new Date().toISOString() })
-    .eq("id", withdrawalId);
+    .eq("id", withdrawalId)
+    .eq("status", "requested")
+    .select();
   if (error) throw new Error("Error al surtir: " + error.message);
+  if (!data || data.length === 0) throw new StaleStatusError("vale");
 
   await callEdgeFunction("notify-action", {
     action: "withdrawal_dispatched",
@@ -58,11 +77,14 @@ export async function dispatchWithdrawal(withdrawalId) {
 }
 
 export async function rejectWithdrawal(withdrawalId) {
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("material_withdrawals")
     .update({ status: "rejected" })
-    .eq("id", withdrawalId);
+    .eq("id", withdrawalId)
+    .eq("status", "requested")
+    .select();
   if (error) throw new Error("Error al rechazar: " + error.message);
+  if (!data || data.length === 0) throw new StaleStatusError("vale");
 
   await callEdgeFunction("notify-action", {
     action: "withdrawal_rejected",
@@ -71,11 +93,14 @@ export async function rejectWithdrawal(withdrawalId) {
 }
 
 export async function markDelivered(withdrawalId) {
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("material_withdrawals")
     .update({ status: "dispatched", delivered_at: new Date().toISOString() })
-    .eq("id", withdrawalId);
+    .eq("id", withdrawalId)
+    .eq("status", "ready")
+    .select();
   if (error) throw new Error("Error al marcar entregado: " + error.message);
+  if (!data || data.length === 0) throw new StaleStatusError("vale");
 
   await callEdgeFunction("notify-action", {
     action: "withdrawal_delivered",
