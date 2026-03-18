@@ -40,7 +40,7 @@ export function useSupabaseData() {
         supabase
           .from("requisitions")
           .select(
-            `*, requested_by_user:users!requisitions_requested_by_fkey(name), approved_by_user:users!requisitions_approved_by_fkey(name), requisition_items(quantity_requested, quantity_approved, estimated_unit_cost, item_description, item:items(name, sku, unit, unit_cost))`
+            `*, requested_by_user:users!requisitions_requested_by_fkey(name), approved_by_user:users!requisitions_approved_by_fkey(name), requisition_items(id, quantity_requested, quantity_approved, estimated_unit_cost, item_description, item:items(name, sku, unit, unit_cost))`
           )
           .order("created_at", { ascending: false })
           .limit(50),

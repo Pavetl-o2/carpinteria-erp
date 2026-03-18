@@ -9,7 +9,18 @@ class StaleStatusError extends Error {
 
 // ─── Requisition Actions ───
 
-export async function approveRequisition(reqId) {
+export async function approveRequisition(reqId, itemsWithQtys) {
+  // Save approved quantities per item
+  if (itemsWithQtys && itemsWithQtys.length > 0) {
+    for (const item of itemsWithQtys) {
+      const { error } = await supabase
+        .from("requisition_items")
+        .update({ quantity_approved: item.quantityApproved })
+        .eq("id", item.id);
+      if (error) throw new Error("Error al guardar cantidad aprobada: " + error.message);
+    }
+  }
+
   const { data, error } = await supabase
     .from("requisitions")
     .update({ status: "approved" })

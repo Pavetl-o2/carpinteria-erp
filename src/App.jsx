@@ -131,6 +131,7 @@ const NewReqPage=({onBack,items:ITEMS=[],categories:CATEGORIES=[]})=>{
 // ─── REQUISITION DETAIL (APPROVAL VIEW) ───
 const ReqDetailPage=({req,onBack,items:ITEMS=[],categories:CATEGORIES=[],refetch})=>{
   const[items,setItems]=useState(req.items.map(i=>({...i,action:null,linked:null})));
+  const[approvedQtys,setApprovedQtys]=useState(()=>{const m={};req.items.forEach(i=>{m[i.id]=i.qtyRequested});return m});
   const[linkM,setLinkM]=useState(null);
   const[catM,setCatM]=useState(null);
   const[rejM,setRejM]=useState(false);
@@ -138,6 +139,7 @@ const ReqDetailPage=({req,onBack,items:ITEMS=[],categories:CATEGORIES=[],refetch
   const[busy,setBusy]=useState(false);
   const[actionErr,setActionErr]=useState(null);
   const doAction=async(fn,...args)=>{setBusy(true);setActionErr(null);try{await fn(...args);if(refetch)await refetch();onBack()}catch(e){setActionErr(e.message)}finally{setBusy(false)}};
+  const handleApprove=()=>{const itemsWithQtys=req.items.map(i=>({id:i.id,quantityApproved:approvedQtys[i.id]??i.qtyRequested}));doAction(approveRequisition,req.id,itemsWithQtys)};
   const freeI=items.filter(i=>i.type==="free_text");
   const unresolved=freeI.filter(i=>!i.action);
   const pending=req.status==="pending_approval";
@@ -175,9 +177,13 @@ const ReqDetailPage=({req,onBack,items:ITEMS=[],categories:CATEGORIES=[],refetch
                   {item.action==="free"&&<Badge v="accent">Texto libre</Badge>}
                 </div>
                 <div style={{display:"flex",gap:16,fontSize:13,color:C.txM,flexWrap:"wrap",alignItems:"center"}}>
-                  <span><strong>{item.qty}</strong> {item.unit}{item.qtyApproved!=null&&item.qtyApproved!==item.qtyRequested&&<span style={{fontSize:11,color:C.warn,marginLeft:6}}>(original: {item.qtyRequested})</span>}</span>
+                  {pending?<span style={{display:"flex",alignItems:"center",gap:6}}>
+                    <input type="number" min={0} value={approvedQtys[item.id]??item.qtyRequested} onChange={e=>setApprovedQtys(q=>({...q,[item.id]:Math.max(0,Number(e.target.value)||0)}))} style={{width:60,padding:"4px 8px",borderRadius:6,border:`1px solid ${(approvedQtys[item.id]??item.qtyRequested)!==item.qtyRequested?C.warn:C.bd}`,fontSize:14,fontWeight:700,textAlign:"center",fontFamily:"monospace",background:(approvedQtys[item.id]??item.qtyRequested)!==item.qtyRequested?"#FFFBEB":"white"}}/>
+                    <span>{item.unit}</span>
+                    {(approvedQtys[item.id]??item.qtyRequested)!==item.qtyRequested&&<span style={{fontSize:11,color:C.warn,fontWeight:600}}>(solicitado: {item.qtyRequested})</span>}
+                  </span>:<span><strong>{item.qty}</strong> {item.unit}{item.qtyApproved!=null&&item.qtyApproved!==item.qtyRequested&&<span style={{fontSize:11,color:C.warn,marginLeft:6}}>(original: {item.qtyRequested})</span>}</span>}
                   {item.estCost&&<span>~{fmt(item.estCost)} c/u</span>}
-                  {item.estCost&&<span style={{fontWeight:600,color:C.tx}}>Subtotal: {fmt(item.estCost*item.qty)}</span>}
+                  {item.estCost&&<span style={{fontWeight:600,color:C.tx}}>Subtotal: {fmt(item.estCost*(pending?(approvedQtys[item.id]??item.qtyRequested):item.qty))}</span>}
                   {!item.estCost&&<span style={{color:C.warn,fontStyle:"italic"}}>Costo por definir</span>}
                 </div>
                 {item.notes&&<div style={{fontSize:12,color:C.ac,marginTop:4,fontStyle:"italic"}}>💬 "{item.notes}"</div>}
@@ -199,12 +205,13 @@ const ReqDetailPage=({req,onBack,items:ITEMS=[],categories:CATEGORIES=[],refetch
           <div style={{display:"flex",justifyContent:"space-between",fontSize:13}}><span style={{color:C.txM}}>Catálogo</span><Badge v="success">{items.filter(i=>i.type==="catalog").length}</Badge></div>
           <div style={{display:"flex",justifyContent:"space-between",fontSize:13}}><span style={{color:C.txM}}>Texto libre</span><Badge v={freeI.length>0?"warning":"default"}>{freeI.length}</Badge></div>
           {unresolved.length>0&&<div style={{display:"flex",justifyContent:"space-between",fontSize:13}}><span style={{color:C.err,fontWeight:600}}>Sin resolver</span><Badge v="danger">{unresolved.length}</Badge></div>}
-          <div style={{borderTop:`1px solid ${C.bd}`,paddingTop:10,display:"flex",justifyContent:"space-between",fontSize:13}}><span style={{fontWeight:600}}>Costo estimado</span><span style={{fontWeight:700,fontFamily:"monospace"}}>{fmt(req.estimatedCost)}</span></div>
+          <div style={{borderTop:`1px solid ${C.bd}`,paddingTop:10,display:"flex",justifyContent:"space-between",fontSize:13}}><span style={{fontWeight:600}}>Costo estimado</span><span style={{fontWeight:700,fontFamily:"monospace"}}>{fmt(items.reduce((s,i)=>(i.estCost||0)*(approvedQtys[i.id]??i.qtyRequested),0))}</span></div>
+          {items.some(i=>(approvedQtys[i.id]??i.qtyRequested)!==i.qtyRequested)&&<div style={{fontSize:11,color:C.warn,marginTop:4}}>⚠ Cantidades modificadas</div>}
         </div>
         {unresolved.length>0&&<div style={{background:C.warnBg,borderRadius:8,padding:10,marginBottom:16,fontSize:12,color:C.warn,lineHeight:1.5}}>⚠ Resuelve los {unresolved.length} items no catalogados antes de aprobar.</div>}
         {actionErr&&<div style={{background:C.errBg,borderRadius:8,padding:10,marginBottom:16,fontSize:12,color:C.err}}>{actionErr}</div>}
         <div style={{display:"flex",flexDirection:"column",gap:8}}>
-          <Btn v="success" size="lg" disabled={unresolved.length>0||busy} onClick={()=>doAction(approveRequisition,req.id)} style={{width:"100%",justifyContent:"center"}}>{busy?"Procesando...":"✓ Aprobar"}</Btn>
+          <Btn v="success" size="lg" disabled={unresolved.length>0||busy} onClick={handleApprove} style={{width:"100%",justifyContent:"center"}}>{busy?"Procesando...":"✓ Aprobar"}</Btn>
           <Btn v="danger" size="lg" disabled={busy} onClick={()=>setRejM(true)} style={{width:"100%",justifyContent:"center"}}>✕ Rechazar</Btn>
           <Btn size="lg" disabled={busy} onClick={()=>doAction(returnRequisition,req.id)} style={{width:"100%",justifyContent:"center"}}>↩ Devolver</Btn>
         </div>
