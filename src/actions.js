@@ -126,6 +126,132 @@ export async function sendReminder(withdrawalId) {
   });
 }
 
+// ─── Purchase Order Actions ───
+
+async function getManagerId() {
+  const { data } = await supabase.from("users").select("id").eq("role", "manager").limit(1).single();
+  return data?.id || null;
+}
+
+export async function savePOItems(poId, updates, inserts, deletes) {
+  for (const del of deletes) {
+    const { error } = await supabase.from("purchase_order_items").delete().eq("id", del);
+    if (error) throw new Error("Error al eliminar item: " + error.message);
+  }
+  for (const upd of updates) {
+    const { error } = await supabase.from("purchase_order_items")
+      .update({ quantity_ordered: upd.qtyOrdered, unit_cost: upd.unitCost })
+      .eq("id", upd.id);
+    if (error) throw new Error("Error al actualizar item: " + error.message);
+  }
+  for (const ins of inserts) {
+    const { error } = await supabase.from("purchase_order_items")
+      .insert({ purchase_order_id: poId, item_id: ins.itemId, quantity_ordered: ins.qtyOrdered, unit_cost: ins.unitCost });
+    if (error) throw new Error("Error al agregar item: " + error.message);
+  }
+  const total = [...updates, ...inserts].reduce((s, i) => s + (i.qtyOrdered * i.unitCost), 0);
+  const { error } = await supabase.from("purchase_orders").update({ total_amount: total }).eq("id", poId);
+  if (error) throw new Error("Error al actualizar total: " + error.message);
+}
+
+export async function approvePO(poId) {
+  const userId = await getManagerId();
+  const { data, error } = await supabase.from("purchase_orders")
+    .update({ status: "approved", approved_by: userId, approved_at: new Date().toISOString() })
+    .eq("id", poId).eq("status", "draft").select();
+  if (error) throw new Error("Error al aprobar OC: " + error.message);
+  if (!data || data.length === 0) throw new StaleStatusError("orden de compra");
+}
+
+export async function cancelPO(poId) {
+  const { data, error } = await supabase.from("purchase_orders")
+    .update({ status: "cancelled" })
+    .eq("id", poId).eq("status", "draft").select();
+  if (error) throw new Error("Error al cancelar OC: " + error.message);
+  if (!data || data.length === 0) throw new StaleStatusError("orden de compra");
+}
+
+export async function markPOSent(poId) {
+  const { data, error } = await supabase.from("purchase_orders")
+    .update({ status: "sent", sent_at: new Date().toISOString() })
+    .eq("id", poId).eq("status", "approved").select();
+  if (error) throw new Error("Error al marcar enviada: " + error.message);
+  if (!data || data.length === 0) throw new StaleStatusError("orden de compra");
+}
+
+export async function uploadDocument(entityId, file, docType, entityType = "purchase_order") {
+  const ext = file.name.split(".").pop();
+  const path = `po/${entityId}/${docType}_${Date.now()}.${ext}`;
+  const { error: uploadError } = await supabase.storage.from("documents").upload(path, file);
+  if (uploadError) throw new Error("Error al subir archivo: " + uploadError.message);
+  const userId = await getManagerId();
+  const { error } = await supabase.from("document_attachments").insert({
+    entity_type: entityType, entity_id: entityId, doc_type: docType,
+    file_url: path, file_name: file.name, file_size: file.size, mime_type: file.type, uploaded_by: userId,
+  });
+  if (error) throw new Error("Error al registrar documento: " + error.message);
+  return path;
+}
+
+export async function uploadQuotation(poId, file) {
+  await uploadDocument(poId, file, "quotation");
+  const { error } = await supabase.from("purchase_orders")
+    .update({ status: "quoted", quoted_at: new Date().toISOString() })
+    .eq("id", poId).eq("status", "sent");
+  if (error) throw new Error("Error al actualizar estado: " + error.message);
+}
+
+export async function authorizePOPayment(poId, quotedAmount) {
+  const { error } = await supabase.from("purchase_orders")
+    .update({ status: "pending_payment" })
+    .eq("id", poId).eq("status", "quoted");
+  if (error) throw new Error("Error al autorizar pago: " + error.message);
+  const { error: apErr } = await supabase.from("accounts_payable")
+    .update({ status: "authorized", authorized_at: new Date().toISOString(), quoted_amount: quotedAmount })
+    .eq("purchase_order_id", poId);
+  if (apErr) console.warn("accounts_payable update:", apErr.message);
+}
+
+export async function registerPOPayment(poId, { paymentMethod, paymentReference, paidAmount, receiptFile }) {
+  if (receiptFile) await uploadDocument(poId, receiptFile, "payment_receipt");
+  const now = new Date().toISOString();
+  const { error } = await supabase.from("purchase_orders")
+    .update({ status: "paid", paid_at: now, payment_method: paymentMethod, payment_reference: paymentReference })
+    .eq("id", poId).eq("status", "pending_payment");
+  if (error) throw new Error("Error al registrar pago: " + error.message);
+  const { error: apErr } = await supabase.from("accounts_payable")
+    .update({ status: "paid", paid_amount: paidAmount, payment_method: paymentMethod, payment_reference: paymentReference, payment_date: now })
+    .eq("purchase_order_id", poId);
+  if (apErr) console.warn("accounts_payable update:", apErr.message);
+}
+
+export async function markPOPendingDelivery(poId, deliveryMethod) {
+  const { error } = await supabase.from("purchase_orders")
+    .update({ status: "pending_delivery", delivery_method: deliveryMethod })
+    .eq("id", poId).eq("status", "paid");
+  if (error) throw new Error("Error al actualizar: " + error.message);
+}
+
+export async function receivePOMaterial(poId) {
+  const userId = await getManagerId();
+  const { data, error } = await supabase.rpc("receive_po_material", { p_purchase_order_id: poId, p_received_by: userId });
+  if (error) throw new Error("Error al recibir material: " + error.message);
+  if (data && !data.success) throw new Error(data.message || "Error al recibir material");
+}
+
+export async function fetchPODocuments(poId) {
+  const { data, error } = await supabase.from("document_attachments")
+    .select("*").eq("entity_type", "purchase_order").eq("entity_id", poId).order("created_at");
+  if (error) throw new Error("Error al cargar documentos: " + error.message);
+  return data || [];
+}
+
+export async function downloadDocument(fileUrl) {
+  const { data, error } = await supabase.storage.from("documents").createSignedUrl(fileUrl, 3600);
+  if (error) throw new Error("Error al generar enlace: " + error.message);
+  window.open(data.signedUrl);
+}
+
 // ─── Edge Function caller ───
 
 async function callEdgeFunction(fnName, body) {

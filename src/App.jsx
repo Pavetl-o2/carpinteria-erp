@@ -2,7 +2,7 @@ import React, { useState, useMemo, useRef, useEffect } from "react";
 import { INVOICES, EXTRACTED_ITEMS } from "./data.js";
 import { useSupabaseData } from "./useSupabaseData.js";
 import { supabase } from "./supabaseClient.js";
-import { approveRequisition, rejectRequisition, returnRequisition, dispatchWithdrawal, rejectWithdrawal, markDelivered, sendReminder } from "./actions.js";
+import { approveRequisition, rejectRequisition, returnRequisition, dispatchWithdrawal, rejectWithdrawal, markDelivered, sendReminder, savePOItems, approvePO, cancelPO, markPOSent, uploadQuotation, authorizePOPayment, registerPOPayment, markPOPendingDelivery, receivePOMaterial, fetchPODocuments, downloadDocument, uploadDocument } from "./actions.js";
 import { BulkUploadModal, downloadTemplate } from "./BulkUpload.jsx";
 import { generatePurchaseOrderPDF } from "./poPdf.js";
 
@@ -469,38 +469,216 @@ const Suppl=({items:ITEMS=[],suppliers:SUPPLIERS=[],refetch})=>{
 </div>};
 
 // ─── PAGE: POs ───
-const POPage=({purchaseOrders:POS=[]})=>{
-  const[s,setS]=useState("");const[det,setDet]=useState(null);
-  const f=POS.filter(p=>!s||p.number.toLowerCase().includes(s.toLowerCase())||p.supplier.toLowerCase().includes(s.toLowerCase()));
-  if(det)return <div>
-    <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:20}}><Btn onClick={()=>setDet(null)}>← Volver</Btn><h2 style={{margin:0,fontSize:18,fontWeight:700}}>{det.number}</h2><SBadge s={det.status}/><div style={{marginLeft:"auto"}}><Btn v="primary" onClick={()=>generatePurchaseOrderPDF(det)}>📄 Descargar PDF</Btn></div></div>
+const PODetail=({po:initPO,onBack,catalogItems:ITEMS=[],refetch})=>{
+  const[po,setPo]=useState(initPO);
+  const[editItems,setEditItems]=useState(()=>po.items.map(i=>({...i,_orig:true})));
+  const[busy,setBusy]=useState(false);
+  const[actionErr,setActionErr]=useState(null);
+  const[addM,setAddM]=useState(false);
+  const[addSearch,setAddSearch]=useState("");
+  const[docs,setDocs]=useState([]);
+  const[quotedAmt,setQuotedAmt]=useState("");
+  const[payMethod,setPayMethod]=useState("transfer");
+  const[payRef,setPayRef]=useState("");
+  const[payAmt,setPayAmt]=useState("");
+  const[delivMethod,setDelivMethod]=useState("supplier_delivers");
+  const isDraft=po.status==="draft";
+  const canPDF=po.status!=="draft"&&po.status!=="cancelled";
+  const editTotal=editItems.reduce((s,i)=>s+(i.qtyOrdered*i.unitCost),0);
+
+  useEffect(()=>{fetchPODocuments(po.id).then(setDocs).catch(()=>{})},[po.id,po.status]);
+
+  const doAction=async(fn,...args)=>{setBusy(true);setActionErr(null);try{await fn(...args);if(refetch)await refetch()}catch(e){setActionErr(e.message)}finally{setBusy(false)}};
+  const refresh=async()=>{if(refetch){const r=await refetch();return r}};
+
+  const handleSave=async()=>{
+    setBusy(true);setActionErr(null);
+    try{
+      const origIds=new Set(po.items.map(i=>i.id));
+      const curIds=new Set(editItems.filter(i=>i._orig).map(i=>i.id));
+      const deletes=[...origIds].filter(id=>!curIds.has(id));
+      const updates=editItems.filter(i=>i._orig).map(i=>({id:i.id,qtyOrdered:i.qtyOrdered,unitCost:i.unitCost}));
+      const inserts=editItems.filter(i=>!i._orig).map(i=>({itemId:i.itemId,qtyOrdered:i.qtyOrdered,unitCost:i.unitCost}));
+      await savePOItems(po.id,updates,inserts,deletes);
+      if(refetch)await refetch();
+      onBack();
+    }catch(e){setActionErr(e.message)}finally{setBusy(false)}
+  };
+
+  const handleApprove=async()=>{
+    if(isDraft&&editItems.some(i=>!i._orig)||editItems.length!==po.items.length||editItems.some((i,idx)=>i._orig&&(i.qtyOrdered!==po.items.find(o=>o.id===i.id)?.qtyOrdered))){
+      await handleSave();
+    }
+    await doAction(approvePO,po.id);onBack();
+  };
+
+  const handleUpload=async(docType,statusFn)=>{
+    const inp=document.createElement("input");inp.type="file";inp.accept="*/*";
+    inp.onchange=async()=>{
+      const file=inp.files[0];if(!file)return;
+      setBusy(true);setActionErr(null);
+      try{
+        if(statusFn)await statusFn(po.id,file);
+        else await uploadDocument(po.id,file,docType);
+        if(refetch)await refetch();
+        const d=await fetchPODocuments(po.id);setDocs(d);
+        onBack();
+      }catch(e){setActionErr(e.message)}finally{setBusy(false)}
+    };inp.click();
+  };
+
+  const addCatalogItem=(item)=>{
+    setEditItems(prev=>[...prev,{id:`new-${Date.now()}`,itemId:item.id,name:item.name,sku:item.sku,unit:item.unit,qtyOrdered:1,qtyReceived:0,unitCost:item.unitCost,_orig:false}]);
+    setAddM(false);setAddSearch("");
+  };
+
+  const updateEditItem=(idx,field,val)=>setEditItems(prev=>prev.map((it,i)=>i===idx?{...it,[field]:val}:it));
+  const removeEditItem=(idx)=>setEditItems(prev=>prev.filter((_,i)=>i!==idx));
+
+  const docTypeLabel={quotation:"Cotización",payment_receipt:"Comprobante Pago",invoice:"Factura",invoice_signed:"Factura Firmada"};
+  const filteredAdd=ITEMS.filter(ci=>!editItems.some(e=>e.itemId===ci.id)&&(!addSearch||ci.name.toLowerCase().includes(addSearch.toLowerCase())||ci.sku.toLowerCase().includes(addSearch.toLowerCase())));
+
+  return <div>
+    <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:20}}>
+      <Btn onClick={onBack}>← Volver</Btn><h2 style={{margin:0,fontSize:18,fontWeight:700}}>{po.number}</h2><SBadge s={po.status}/>
+      <div style={{marginLeft:"auto",display:"flex",gap:8}}>
+        {canPDF&&<Btn v="primary" onClick={()=>generatePurchaseOrderPDF({...po,items:editItems,total:editTotal})}>📄 Descargar PDF</Btn>}
+        {isDraft&&<Btn v="primary" onClick={()=>{const draft={...po,items:editItems,total:editTotal};generatePurchaseOrderPDF(draft,true)}}>📄 Preview PDF</Btn>}
+      </div>
+    </div>
+    {actionErr&&<div style={{background:C.errBg,borderRadius:8,padding:12,marginBottom:16,fontSize:13,color:C.err}}>{actionErr}</div>}
     <div style={{display:"grid",gridTemplateColumns:"2fr 1fr",gap:20}}>
       <div>
-        <Card style={{marginBottom:20}}><div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:16}}>{[["Proveedor",det.supplier],["Fecha",det.date],["Creada por",det.createdBy||"—"],["Items",`${det.received}/${det.numItems} recibidos`],["Total",fmt(det.total)],["Estado",null]].map(([l,v])=><div key={l}><div style={{fontSize:11,color:C.txL,marginBottom:2}}>{l}</div>{l==="Estado"?<SBadge s={det.status}/>:<div style={{fontSize:14,fontWeight:600}}>{v}</div>}</div>)}</div>
-        {det.supplierPhone&&<div style={{marginTop:12,fontSize:12,color:C.txM}}>📞 {det.supplierPhone} {det.supplierEmail&&`· ✉️ ${det.supplierEmail}`}</div>}
+        <Card style={{marginBottom:20}}><div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:16}}>{[["Proveedor",po.supplier],["Fecha",po.date],["Creada por",po.createdBy||"—"],["Items",`${po.received}/${po.numItems} recibidos`],["Total",fmt(isDraft?editTotal:po.total)],["Estado",null]].map(([l,v])=><div key={l}><div style={{fontSize:11,color:C.txL,marginBottom:2}}>{l}</div>{l==="Estado"?<SBadge s={po.status}/>:<div style={{fontSize:14,fontWeight:600}}>{v}</div>}</div>)}</div>
+        {po.supplierPhone&&<div style={{marginTop:12,fontSize:12,color:C.txM}}>📞 {po.supplierPhone} {po.supplierEmail&&`· ✉️ ${po.supplierEmail}`}</div>}
         </Card>
-        <Card>
-          <h3 style={{fontSize:14,fontWeight:700,margin:"0 0 16px",color:C.txM,textTransform:"uppercase",letterSpacing:.5}}>Items de la Orden ({det.items.length})</h3>
-          {det.items.map((it,idx)=><div key={it.id} style={{padding:"12px 0",borderBottom:idx<det.items.length-1?`1px solid ${C.bd}`:"none",display:"flex",alignItems:"center",gap:14}}>
-            <div style={{flex:1}}><div style={{fontWeight:600,fontSize:13}}>{it.name}</div><div style={{fontSize:11,color:C.txM}}>{it.sku} · {fmt(it.unitCost)}/{it.unit}</div></div>
-            <div style={{textAlign:"right"}}><div style={{display:"flex",alignItems:"center",gap:8}}><div style={{textAlign:"center"}}><div style={{fontSize:11,color:C.txL}}>Ordenado</div><div style={{fontSize:16,fontWeight:700}}>{it.qtyOrdered}</div></div><span style={{color:C.txL}}>→</span><div style={{textAlign:"center"}}><div style={{fontSize:11,color:C.txL}}>Recibido</div><div style={{fontSize:16,fontWeight:700,color:it.qtyReceived>=it.qtyOrdered?C.ok:it.qtyReceived>0?C.warn:C.txL}}>{it.qtyReceived}</div></div></div>
-            <div style={{fontSize:12,color:C.txM,marginTop:2}}>{it.unit} · {fmt(it.qtyOrdered*it.unitCost)}</div></div>
+
+        <Card style={{marginBottom:20}}>
+          <h3 style={{fontSize:14,fontWeight:700,margin:"0 0 16px",color:C.txM,textTransform:"uppercase",letterSpacing:.5}}>Items de la Orden ({isDraft?editItems.length:po.items.length})</h3>
+          {isDraft?<>
+            {editItems.map((it,idx)=><div key={it.id} style={{padding:"12px 0",borderBottom:idx<editItems.length-1?`1px solid ${C.bd}`:"none",display:"flex",alignItems:"center",gap:12}}>
+              <div style={{flex:1}}><div style={{fontWeight:600,fontSize:13}}>{it.name}</div><div style={{fontSize:11,color:C.txM}}>{it.sku} · {it.unit}</div></div>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <div><div style={{fontSize:10,color:C.txL,marginBottom:2}}>Cantidad</div><input type="number" min={1} value={it.qtyOrdered} onChange={e=>updateEditItem(idx,"qtyOrdered",Math.max(1,Number(e.target.value)||1))} style={{width:60,padding:"4px 8px",borderRadius:6,border:`1px solid ${C.bd}`,fontSize:14,fontWeight:700,textAlign:"center",fontFamily:"monospace"}}/></div>
+                <div><div style={{fontSize:10,color:C.txL,marginBottom:2}}>P. Unit.</div><input type="number" min={0} step={0.01} value={it.unitCost} onChange={e=>updateEditItem(idx,"unitCost",Math.max(0,Number(e.target.value)||0))} style={{width:80,padding:"4px 8px",borderRadius:6,border:`1px solid ${C.bd}`,fontSize:14,fontWeight:700,textAlign:"center",fontFamily:"monospace"}}/></div>
+                <div style={{textAlign:"right",minWidth:80}}><div style={{fontSize:10,color:C.txL}}>Subtotal</div><div style={{fontSize:14,fontWeight:700,fontFamily:"monospace"}}>{fmt(it.qtyOrdered*it.unitCost)}</div></div>
+                <button onClick={()=>removeEditItem(idx)} style={{background:"none",border:"none",cursor:"pointer",color:C.err,fontSize:18,padding:4}} title="Eliminar">✕</button>
+              </div>
+            </div>)}
+            <div style={{marginTop:12}}><Btn v="ghost" onClick={()=>setAddM(true)}>+ Agregar artículo</Btn></div>
+            <div style={{marginTop:12,paddingTop:12,borderTop:`2px solid ${C.bd}`,display:"flex",justifyContent:"space-between"}}><span style={{fontWeight:700}}>Total</span><span style={{fontWeight:700,fontFamily:"monospace",fontSize:16}}>{fmt(editTotal)}</span></div>
+          </>:<>
+            {po.items.map((it,idx)=><div key={it.id} style={{padding:"12px 0",borderBottom:idx<po.items.length-1?`1px solid ${C.bd}`:"none",display:"flex",alignItems:"center",gap:14}}>
+              <div style={{flex:1}}><div style={{fontWeight:600,fontSize:13}}>{it.name}</div><div style={{fontSize:11,color:C.txM}}>{it.sku} · {fmt(it.unitCost)}/{it.unit}</div></div>
+              <div style={{textAlign:"right"}}><div style={{display:"flex",alignItems:"center",gap:8}}><div style={{textAlign:"center"}}><div style={{fontSize:11,color:C.txL}}>Ordenado</div><div style={{fontSize:16,fontWeight:700}}>{it.qtyOrdered}</div></div><span style={{color:C.txL}}>→</span><div style={{textAlign:"center"}}><div style={{fontSize:11,color:C.txL}}>Recibido</div><div style={{fontSize:16,fontWeight:700,color:it.qtyReceived>=it.qtyOrdered?C.ok:it.qtyReceived>0?C.warn:C.txL}}>{it.qtyReceived}</div></div></div>
+              <div style={{fontSize:12,color:C.txM,marginTop:2}}>{it.unit} · {fmt(it.qtyOrdered*it.unitCost)}</div></div>
+            </div>)}
+            <div style={{marginTop:12,paddingTop:12,borderTop:`2px solid ${C.bd}`,display:"flex",justifyContent:"space-between"}}><span style={{fontWeight:700}}>Total</span><span style={{fontWeight:700,fontFamily:"monospace",fontSize:16}}>{fmt(po.total)}</span></div>
+          </>}
+        </Card>
+
+        {docs.length>0&&<Card>
+          <h3 style={{fontSize:14,fontWeight:700,margin:"0 0 16px",color:C.txM,textTransform:"uppercase",letterSpacing:.5}}>Documentos</h3>
+          {docs.map(d=><div key={d.id} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 0",borderBottom:`1px solid ${C.bd}`}}>
+            <div style={{width:32,height:32,borderRadius:8,background:C.infoBg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16}}>📎</div>
+            <div style={{flex:1}}><div style={{fontSize:13,fontWeight:600}}>{docTypeLabel[d.doc_type]||d.doc_type}</div><div style={{fontSize:11,color:C.txM}}>{d.file_name} · {new Date(d.created_at).toLocaleDateString("es-MX")}</div></div>
+            <Btn size="sm" onClick={()=>downloadDocument(d.file_url)}>⬇ Descargar</Btn>
           </div>)}
-          <div style={{marginTop:12,paddingTop:12,borderTop:`2px solid ${C.bd}`,display:"flex",justifyContent:"space-between"}}><span style={{fontWeight:700}}>Total</span><span style={{fontWeight:700,fontFamily:"monospace",fontSize:16}}>{fmt(det.total)}</span></div>
-        </Card>
+        </Card>}
       </div>
-      <Card style={{position:"sticky",top:20,alignSelf:"start"}}>
-        <h3 style={{fontSize:14,fontWeight:700,margin:"0 0 16px",color:C.txM,textTransform:"uppercase",letterSpacing:.5}}>Progreso</h3>
-        <div style={{textAlign:"center",marginBottom:16}}>
-          <div style={{fontSize:36,fontWeight:700,color:det.received===det.numItems?C.ok:C.ac}}>{det.numItems>0?Math.round(det.received/det.numItems*100):0}%</div>
-          <div style={{fontSize:12,color:C.txM}}>{det.received} de {det.numItems} items recibidos</div>
-        </div>
-        <div style={{height:8,borderRadius:4,background:C.bd,overflow:"hidden",marginBottom:16}}>
-          <div style={{width:`${det.numItems>0?(det.received/det.numItems)*100:0}%`,height:"100%",borderRadius:4,background:det.received===det.numItems?C.ok:C.ac,transition:"width .3s"}}/>
-        </div>
-      </Card>
+
+      <div style={{display:"flex",flexDirection:"column",gap:16}}>
+        <Card style={{position:"sticky",top:20}}>
+          <h3 style={{fontSize:14,fontWeight:700,margin:"0 0 16px",color:C.txM,textTransform:"uppercase",letterSpacing:.5}}>Acciones</h3>
+
+          {po.status==="draft"&&<div style={{display:"flex",flexDirection:"column",gap:8}}>
+            <Btn v="primary" size="lg" disabled={busy||editItems.length===0} onClick={handleSave} style={{width:"100%",justifyContent:"center"}}>{busy?"Guardando...":"💾 Guardar Cambios"}</Btn>
+            <Btn v="success" size="lg" disabled={busy||editItems.length===0} onClick={handleApprove} style={{width:"100%",justifyContent:"center"}}>{busy?"Procesando...":"✅ Aprobar OC"}</Btn>
+            <Btn v="danger" size="lg" disabled={busy} onClick={async()=>{await doAction(cancelPO,po.id);onBack()}} style={{width:"100%",justifyContent:"center"}}>❌ Cancelar OC</Btn>
+          </div>}
+
+          {po.status==="approved"&&<div style={{display:"flex",flexDirection:"column",gap:10}}>
+            <p style={{fontSize:13,color:C.txM,lineHeight:1.5,margin:"0 0 8px"}}>Descarga el PDF y envíalo al proveedor. Cuando lo hayas enviado, marca como enviada.</p>
+            <Btn v="primary" size="lg" disabled={busy} onClick={()=>generatePurchaseOrderPDF(po)} style={{width:"100%",justifyContent:"center"}}>📄 Descargar PDF Final</Btn>
+            <Btn v="info" size="lg" disabled={busy} onClick={async()=>{await doAction(markPOSent,po.id);onBack()}} style={{width:"100%",justifyContent:"center"}}>{busy?"Procesando...":"📧 Marcar como Enviada"}</Btn>
+          </div>}
+
+          {po.status==="sent"&&<div style={{display:"flex",flexDirection:"column",gap:10}}>
+            <p style={{fontSize:13,color:C.txM,lineHeight:1.5,margin:"0 0 8px"}}>Sube la cotización del proveedor para continuar.</p>
+            {docs.some(d=>d.doc_type==="quotation")?<div style={{background:C.okBg,borderRadius:8,padding:10,fontSize:12,color:C.ok}}>✅ Cotización ya subida</div>:null}
+            <Btn v="primary" size="lg" disabled={busy} onClick={()=>handleUpload("quotation",uploadQuotation)} style={{width:"100%",justifyContent:"center"}}>{busy?"Subiendo...":"📎 Subir Cotización"}</Btn>
+          </div>}
+
+          {po.status==="quoted"&&<div style={{display:"flex",flexDirection:"column",gap:10}}>
+            <Label>Monto cotizado</Label>
+            <Inp type="number" placeholder="$0.00" value={quotedAmt} onChange={e=>setQuotedAmt(e.target.value)}/>
+            <Btn v="success" size="lg" disabled={busy||!quotedAmt} onClick={async()=>{await doAction(authorizePOPayment,po.id,Number(quotedAmt));onBack()}} style={{width:"100%",justifyContent:"center"}}>{busy?"Procesando...":"💰 Autorizar Pago"}</Btn>
+          </div>}
+
+          {po.status==="pending_payment"&&<div style={{display:"flex",flexDirection:"column",gap:10}}>
+            <Label>Método de pago</Label>
+            <Sel value={payMethod} onChange={e=>setPayMethod(e.target.value)}>
+              <option value="transfer">Transferencia</option><option value="cash">Efectivo</option><option value="check">Cheque</option><option value="card">Tarjeta</option>
+            </Sel>
+            <Label>Referencia de pago</Label>
+            <Inp placeholder="Número de referencia" value={payRef} onChange={e=>setPayRef(e.target.value)}/>
+            <Label>Monto pagado</Label>
+            <Inp type="number" placeholder="$0.00" value={payAmt} onChange={e=>setPayAmt(e.target.value)}/>
+            <Btn v="ghost" disabled={busy} onClick={()=>handleUpload("payment_receipt")} style={{width:"100%",justifyContent:"center"}}>{busy?"Subiendo...":"📎 Subir Comprobante"}</Btn>
+            <Btn v="success" size="lg" disabled={busy||!payAmt||!payMethod} onClick={async()=>{await doAction(registerPOPayment,po.id,{paymentMethod:payMethod,paymentReference:payRef,paidAmount:Number(payAmt),receiptFile:null});onBack()}} style={{width:"100%",justifyContent:"center"}}>{busy?"Procesando...":"✅ Registrar Pago"}</Btn>
+          </div>}
+
+          {po.status==="paid"&&<div style={{display:"flex",flexDirection:"column",gap:10}}>
+            <Label>Método de entrega</Label>
+            <Sel value={delivMethod} onChange={e=>setDelivMethod(e.target.value)}>
+              <option value="supplier_delivers">Proveedor entrega</option><option value="pickup">Vamos a recoger</option>
+            </Sel>
+            <Btn v="primary" size="lg" disabled={busy} onClick={async()=>{await doAction(markPOPendingDelivery,po.id,delivMethod);onBack()}} style={{width:"100%",justifyContent:"center"}}>{busy?"Procesando...":"📦 Esperando Material"}</Btn>
+          </div>}
+
+          {po.status==="pending_delivery"&&<div style={{display:"flex",flexDirection:"column",gap:10}}>
+            <p style={{fontSize:13,color:C.txM,lineHeight:1.5,margin:0}}>Cuando llegue el material, registra la recepción.</p>
+            <Btn v="ghost" disabled={busy} onClick={()=>handleUpload("invoice")} style={{width:"100%",justifyContent:"center"}}>{busy?"Subiendo...":"📎 Subir Factura"}</Btn>
+            <Btn v="success" size="lg" disabled={busy} onClick={async()=>{await doAction(receivePOMaterial,po.id);onBack()}} style={{width:"100%",justifyContent:"center"}}>{busy?"Procesando...":"✅ Registrar Recepción"}</Btn>
+          </div>}
+
+          {po.status==="received"&&<div style={{display:"flex",flexDirection:"column",gap:10}}>
+            <div style={{background:C.okBg,borderRadius:8,padding:12,textAlign:"center"}}><span style={{fontSize:20}}>✅</span><div style={{fontSize:14,fontWeight:700,color:C.ok,marginTop:4}}>Completada</div></div>
+            <Btn v="ghost" disabled={busy} onClick={()=>handleUpload("invoice_signed")} style={{width:"100%",justifyContent:"center"}}>{busy?"Subiendo...":"📎 Subir Factura Firmada"}</Btn>
+          </div>}
+
+          {po.status==="cancelled"&&<div style={{background:C.errBg,borderRadius:8,padding:12,textAlign:"center"}}><span style={{fontSize:20}}>❌</span><div style={{fontSize:14,fontWeight:700,color:C.err,marginTop:4}}>Cancelada</div></div>}
+        </Card>
+
+        {!isDraft&&<Card>
+          <h3 style={{fontSize:14,fontWeight:700,margin:"0 0 16px",color:C.txM,textTransform:"uppercase",letterSpacing:.5}}>Progreso</h3>
+          <div style={{textAlign:"center",marginBottom:16}}>
+            <div style={{fontSize:36,fontWeight:700,color:po.received===po.numItems?C.ok:C.ac}}>{po.numItems>0?Math.round(po.received/po.numItems*100):0}%</div>
+            <div style={{fontSize:12,color:C.txM}}>{po.received} de {po.numItems} items recibidos</div>
+          </div>
+          <div style={{height:8,borderRadius:4,background:C.bd,overflow:"hidden",marginBottom:16}}>
+            <div style={{width:`${po.numItems>0?(po.received/po.numItems)*100:0}%`,height:"100%",borderRadius:4,background:po.received===po.numItems?C.ok:C.ac,transition:"width .3s"}}/>
+          </div>
+        </Card>}
+      </div>
     </div>
-  </div>;
+
+    <Modal open={addM} onClose={()=>{setAddM(false);setAddSearch("")}} title="Agregar Artículo del Catálogo" w={500}>
+      <Search value={addSearch} onChange={setAddSearch} placeholder="Buscar por nombre o SKU..."/>
+      <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:300,overflow:"auto",marginTop:12}}>
+        {filteredAdd.length===0&&<div style={{textAlign:"center",padding:20,color:C.txL,fontSize:13}}>No se encontraron artículos</div>}
+        {filteredAdd.slice(0,30).map(item=><button key={item.id} onClick={()=>addCatalogItem(item)} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",borderRadius:8,border:`1px solid ${C.bd}`,background:"white",cursor:"pointer",fontFamily:"inherit",textAlign:"left",width:"100%",fontSize:13}} onMouseEnter={e=>e.currentTarget.style.background="#FAFAF9"} onMouseLeave={e=>e.currentTarget.style.background="white"}>
+          <span style={{color:C.ok}}>📦</span><div style={{flex:1}}><div style={{fontWeight:600}}>{item.name}</div><div style={{fontSize:11,color:C.txM}}>{item.sku} · {fmt(item.unitCost)}/{item.unit}</div></div><span style={{fontSize:12,color:C.txM}}>Stock: {item.currentStock}</span>
+        </button>)}
+      </div>
+    </Modal>
+  </div>
+};
+
+const POPage=({purchaseOrders:POS=[],items:ITEMS=[],refetch})=>{
+  const[s,setS]=useState("");const[det,setDet]=useState(null);
+  const f=POS.filter(p=>!s||p.number.toLowerCase().includes(s.toLowerCase())||p.supplier.toLowerCase().includes(s.toLowerCase()));
+  if(det){const fresh=POS.find(p=>p.id===det.id)||det;return <PODetail po={fresh} onBack={()=>setDet(null)} catalogItems={ITEMS} refetch={refetch}/>}
   return <div>
     <div style={{display:"flex",justifyContent:"space-between",marginBottom:20}}><Search value={s} onChange={setS} placeholder="Buscar orden o proveedor..."/></div>
     {f.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:C.txL,fontSize:14}}>No hay órdenes de compra</div>}
@@ -620,7 +798,7 @@ export default function App(){
   const[sb,setSb]=useState(true);
   const{items,categories,suppliers,requisitions,withdrawals,purchaseOrders,recentActivity,projectConsumption,loading,error,refetch}=useSupabaseData();
   const d={items,categories,suppliers,requisitions,withdrawals,purchaseOrders,recentActivity,projectConsumption};
-  const render=()=>{if(loading)return <Loader/>;if(error)return <Loader error={error} onRetry={refetch}/>;switch(page){case"dashboard":return <Dashboard go={setPage} {...d}/>;case"inventory":return <Inventory items={items} categories={categories} suppliers={suppliers} refetch={refetch}/>;case"invoices":return <Invoices/>;case"requisitions":return <Reqs items={items} categories={categories} requisitions={requisitions} refetch={refetch}/>;case"withdrawals":return <Withdrawals withdrawals={withdrawals} refetch={refetch}/>;case"purchase-orders":return <POPage purchaseOrders={purchaseOrders}/>;case"suppliers":return <Suppl items={items} suppliers={suppliers} refetch={refetch}/>;default:return <Dashboard go={setPage} {...d}/>}};
+  const render=()=>{if(loading)return <Loader/>;if(error)return <Loader error={error} onRetry={refetch}/>;switch(page){case"dashboard":return <Dashboard go={setPage} {...d}/>;case"inventory":return <Inventory items={items} categories={categories} suppliers={suppliers} refetch={refetch}/>;case"invoices":return <Invoices/>;case"requisitions":return <Reqs items={items} categories={categories} requisitions={requisitions} refetch={refetch}/>;case"withdrawals":return <Withdrawals withdrawals={withdrawals} refetch={refetch}/>;case"purchase-orders":return <POPage purchaseOrders={purchaseOrders} items={items} refetch={refetch}/>;case"suppliers":return <Suppl items={items} suppliers={suppliers} refetch={refetch}/>;default:return <Dashboard go={setPage} {...d}/>}};
   return <div style={{display:"flex",height:"100vh",fontFamily:"'DM Sans','Segoe UI',system-ui,sans-serif",background:C.bg,color:C.tx}}>
     <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');*{box-sizing:border-box;margin:0;padding:0}::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:#D6D3D1;border-radius:3px}@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}input:focus,select:focus,textarea:focus{outline:none;border-color:${C.ac}!important;box-shadow:0 0 0 3px ${C.ac}20}`}</style>
 

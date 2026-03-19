@@ -69,7 +69,7 @@ export function useSupabaseData() {
         supabase
           .from("purchase_orders")
           .select(
-            `*, supplier:suppliers(name, phone, email), created_by_user:users!purchase_orders_created_by_fkey(name), purchase_order_items(quantity_ordered, quantity_received, unit_cost, item:items(name, sku, unit))`
+            `*, supplier:suppliers(name, phone, email), created_by_user:users!purchase_orders_created_by_fkey(name), approved_by_user:users!purchase_orders_approved_by_fkey(name), purchase_order_items(id, item_id, quantity_ordered, quantity_received, unit_cost, item:items(id, name, sku, unit, unit_cost))`
           )
           .order("created_at", { ascending: false })
           .limit(50),
@@ -347,18 +347,32 @@ export function useSupabaseData() {
           id: po.id,
           number: po.po_number || po.order_number || "",
           supplier: po.supplier?.name || "",
+          supplierId: po.supplier_id || null,
           supplierPhone: po.supplier?.phone || "",
           supplierEmail: po.supplier?.email || "",
+          supplierAddress: po.supplier?.address || "",
+          supplierContact: po.supplier?.contact_name || "",
           status: po.status || "draft",
           date: po.created_at ? new Date(po.created_at).toLocaleDateString("es-MX") : "",
+          createdAt: po.created_at,
+          approvedAt: po.approved_at,
+          sentAt: po.sent_at,
+          quotedAt: po.quoted_at,
+          paidAt: po.paid_at,
+          deliveryMethod: po.delivery_method || null,
+          paymentMethod: po.payment_method || null,
+          paymentReference: po.payment_reference || null,
+          notes: po.notes || "",
           total,
           numItems: poItems.length,
           received: poItems.filter((i) => Number(i.quantity_received) >= Number(i.quantity_ordered)).length,
           totalOrdered,
           totalReceived,
           createdBy: po.created_by_user?.name || "",
+          approvedBy: po.approved_by_user?.name || "",
           items: poItems.map((i, idx) => ({
             id: i.id || `poi-${idx}`,
+            itemId: i.item_id || i.item?.id || null,
             name: i.item?.name || "",
             sku: i.item?.sku || "",
             unit: i.item?.unit || "pza",
