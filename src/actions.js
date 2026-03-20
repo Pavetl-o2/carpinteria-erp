@@ -237,6 +237,14 @@ export async function receivePOMaterial(poId) {
   const { data, error } = await supabase.rpc("receive_po_material", { p_purchase_order_id: poId, p_received_by: userId });
   if (error) throw new Error("Error al recibir material: " + error.message);
   if (data && !data.success) throw new Error(data.message || "Error al recibir material");
+
+  if (data?.success) {
+    await callEdgeFunction("notify-action", {
+      action: "material_received",
+      purchase_order_id: poId,
+      receipt_data: data,
+    });
+  }
 }
 
 export async function fetchPODocuments(poId) {
